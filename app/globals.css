@@ -1,0 +1,57 @@
+@import "tailwindcss";
+
+/*
+ * Holdem Clock design tokens
+ *
+ * Aesthetic source: reference TV-display screenshot Travis shared.
+ * Tokens live as CSS variables here so they can be swapped per-surface
+ * (e.g. an alternate theme) without rebuilding Tailwind classes.
+ *
+ * Usage from Tailwind: bg-bg, text-fg, text-label, text-value,
+ *                      border-gold, ring-gold, etc.
+ */
+:root {
+  /* Surfaces */
+  --color-bg: #000000;            /* Background — pure black, like the TV screen */
+  --color-fg: #ffffff;            /* Default foreground / values */
+
+  /* Accents */
+  --color-gold: #d4af37;          /* Clock ring / primary accent */
+  --color-gold-bright: #ffd700;   /* Active/glow variant of gold */
+  --color-label: #4ea7e8;         /* Light-blue category labels (BLINDS, ANTE, etc.) */
+  --color-value: #ffffff;         /* Numeric/value text */
+
+  /* State */
+  --color-danger: #e8584e;
+  --color-success: #4ee89a;
+}
+
+@theme inline {
+  /* Map the CSS vars onto Tailwind v4's color scale. */
+  --color-bg: var(--color-bg);
+  --color-fg: var(--color-fg);
+  --color-gold: var(--color-gold);
+  --color-gold-bright: var(--color-gold-bright);
+  --color-label: var(--color-label);
+  --color-value: var(--color-value);
+  --color-danger: var(--color-danger);
+  --color-success: var(--color-success);
+
+  /* Background / foreground aliases that next-themes / OS dark mode expect. */
+  --color-background: var(--color-bg);
+  --color-foreground: var(--color-fg);
+
+  --font-sans: var(--font-inter);
+  --font-mono: var(--font-jetbrains-mono);
+}
+
+html,
+body {
+  background: var(--color-bg);
+  color: var(--color-fg);
+}
+
+body {
+  font-family: var(--font-inter), ui-sans-serif, system-ui, -apple-system, sans-serif;
+  font-feature-settings: "ss01", "cv11";
+}

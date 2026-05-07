@@ -1,0 +1,21 @@
+{
+  "name": "@poker/color-up",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Pure-TS library for poker color-up exchange calculations.",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

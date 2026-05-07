@@ -1,0 +1,43 @@
+services:
+  signal-cli-rest-api:
+    image: bbernhard/signal-cli-rest-api:latest
+    container_name: signal-cli-rest-api
+    restart: unless-stopped
+    environment:
+      # json-rpc keeps a persistent signal-cli daemon — much faster for repeated
+      # sends than the default "normal" mode. Switch to "normal" only if you hit
+      # compatibility issues during initial registration.
+      - MODE=json-rpc
+    volumes:
+      # Persists registration state, encryption keys, and group membership.
+      # Losing this volume = re-registering / re-linking the number.
+      - ./signal-data:/home/.local/share/signal-cli
+    ports:
+      # Bound to 127.0.0.1 only. Used during initial setup (register / link /
+      # group lookup) where running locally on the Mac Mini is the only caller.
+      # Production traffic from Vercel goes through the HMAC proxy below.
+      - "127.0.0.1:8081:8080"
+    networks:
+      - signal-net
+
+  signal-bridge-proxy:
+    build: ./proxy
+    container_name: signal-bridge-proxy
+    restart: unless-stopped
+    environment:
+      - SIGNAL_BRIDGE_SECRET=${SIGNAL_BRIDGE_SECRET}
+      - UPSTREAM_URL=http://signal-cli-rest-api:8080
+      - PORT=8080
+      # Reject requests whose X-Timestamp drifts more than this from server clock.
+      - MAX_SKEW_MS=300000
+    ports:
+      # The only port Cloudflare Tunnel / Tailscale should point at.
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      - signal-cli-rest-api
+    networks:
+      - signal-net
+
+networks:
+  signal-net:
+    driver: bridge

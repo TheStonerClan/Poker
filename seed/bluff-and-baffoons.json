@@ -1,0 +1,61 @@
+{
+  "_comment": "Seed data — Travis's real ultimate-holdem-timer config exported 2025-11-15. Used as default tournament template in the app.",
+  "name": "Bluff and Baffoons",
+  "location": "Jarrell",
+  "buyIn": 20,
+  "startingStack": 500,
+  "currency": "USD",
+  "buyback": {
+    "_comment": "House rule: each player has ONE buyback token, spendable in two ways. (a) when busted within rebuy window: fresh 500-chip starting stack for $20. (b) at the 2nd color-up break (L8): add 500 chips on top of current stack for $20. Once spent in either way, no more. Track which mode it was redeemed as for analytics.",
+    "tokensPerPlayer": 1,
+    "price": 20,
+    "rebuyChips": 500,
+    "rebuyAllowedThroughLevel": 6,
+    "addOnAtBreakLevel": 8,
+    "addOnChips": 500
+  },
+  "anteMode": "BB",
+  "blindStructure": [
+    { "level": 1,  "smallBlind": 1,   "bigBlind": 2,   "ante": 2,   "durationMin": 15, "isBreak": false },
+    { "level": 2,  "smallBlind": 2,   "bigBlind": 4,   "ante": 4,   "durationMin": 15, "isBreak": false },
+    { "level": 3,  "smallBlind": 4,   "bigBlind": 8,   "ante": 8,   "durationMin": 15, "isBreak": false },
+    { "level": 4,  "smallBlind": 8,   "bigBlind": 16,  "ante": 16,  "durationMin": 15, "isBreak": false },
+    { "level": 5,  "isBreak": true,   "durationMin": 10, "colorUp": [1, 5] },
+    { "level": 6,  "smallBlind": 20,  "bigBlind": 40,  "ante": 40,  "durationMin": 20, "isBreak": false },
+    { "level": 7,  "smallBlind": 40,  "bigBlind": 80,  "ante": 80,  "durationMin": 20, "isBreak": false },
+    { "level": 8,  "isBreak": true,   "durationMin": 10, "colorUp": [10, 25] },
+    { "level": 9,  "smallBlind": 100, "bigBlind": 200, "ante": 200, "durationMin": 20, "isBreak": false },
+    { "level": 10, "smallBlind": 200, "bigBlind": 400, "ante": 400, "durationMin": 20, "isBreak": false },
+    { "level": 11, "smallBlind": 400, "bigBlind": 800, "ante": 800, "durationMin": 120, "isBreak": false }
+  ],
+  "prizeDistribution": {
+    "type": "static",
+    "rules": [
+      { "position": 1, "kind": "percentRemainder", "value": 70 },
+      { "position": 2, "kind": "percentRemainder", "value": 30 },
+      { "position": 3, "kind": "fixed", "value": 20 }
+    ],
+    "rounding": { "increment": 10, "surplusToFirst": true },
+    "guarantee": 0,
+    "overlay": true
+  },
+  "chipDenominations": [
+    { "color": "white",  "value": 1 },
+    { "color": "red",    "value": 5 },
+    { "color": "blue",   "value": 10 },
+    { "color": "green",  "value": 25 },
+    { "color": "black",  "value": 100 }
+  ],
+  "startingStackComposition": [
+    { "color": "white",  "count": 20 },
+    { "color": "red",    "count": 16 },
+    { "color": "blue",   "count": 10 },
+    { "color": "green",  "count": 4 },
+    { "color": "black",  "count": 2 }
+  ],
+  "sidePots": {
+    "_comment": "Travis mentioned 4-of-a-kind and straight-flush bonuses but UHT export does not contain them. Defaults below are placeholders to be confirmed.",
+    "fourOfAKind": { "enabled": false, "amount": 0 },
+    "straightFlush": { "enabled": false, "amount": 0 }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "name": "signal-bridge-proxy",
+  "version": "1.0.0",
+  "private": true,
+  "description": "HMAC-authenticating reverse proxy in front of bbernhard/signal-cli-rest-api.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
