@@ -30,5 +30,13 @@
     ".next/dev/types/**/*.ts",
     "**/*.mts"
   ],
-  "exclude": ["node_modules"]
+  "exclude": [
+    "node_modules",
+    "**/node_modules",
+    "lib/recurrence",
+    "lib/prize-math",
+    "lib/color-up",
+    "lib/uht-import",
+    "scripts/signal-cli/proxy"
+  ]
 }
