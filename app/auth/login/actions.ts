@@ -35,9 +35,29 @@ export async function sendMagicLink(
   const { email, next } = parsed.data;
   const supabase = await createClient();
 
-  // Build the absolute URL Supabase will redirect the magic link to. This must
-  // match an allow-listed redirect URL in the Supabase project settings.
-  const origin = (await headers()).get("origin") ?? "";
+  // Build the absolute URL Supabase will redirect the magic link to. Must
+  // match an allow-listed redirect URL in the Supabase dashboard. Origin
+  // isn't always present on Server Action POSTs (e.g. some proxy setups
+  // strip it); fall back to host + x-forwarded-proto so we don't end up
+  // with `new URL("/auth/callback", "")` throwing.
+  const hdrs = await headers();
+  const origin =
+    hdrs.get("origin") ??
+    (() => {
+      const host = hdrs.get("host");
+      if (!host) return null;
+      const proto = hdrs.get("x-forwarded-proto") ?? "https";
+      return `${proto}://${host}`;
+    })();
+
+  if (!origin) {
+    return {
+      status: "error",
+      message: "Could not determine app origin. Try refreshing the page.",
+      email,
+    };
+  }
+
   const redirectTo = new URL("/auth/callback", origin);
   if (next) redirectTo.searchParams.set("next", next);
 
