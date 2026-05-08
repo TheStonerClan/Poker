@@ -3,7 +3,6 @@ import type { PlayerCounts, TournamentPlayerWithName } from "./types";
 export function aggregatePlayers(
   rows: TournamentPlayerWithName[],
 ): PlayerCounts {
-  let entries = rows.length;
   let reEntries = 0;
   let addOns = 0;
   let activeChips = 0;
@@ -18,9 +17,11 @@ export function aggregatePlayers(
     }
   }
 
-  // A rebuy is its own paid entry (buyback proceeds add to pool the same as
-  // a buy-in), so the entries count is rows + rebuys.
-  entries = rows.length + reEntries;
+  // `entries` is the number of distinct paying players (one row per player).
+  // The downstream `computePool` adds `buybacks * buybackPrice` separately,
+  // so don't fold rebuys into entries here — that double-counts and was the
+  // source of the "rebuy adds $40 to the pool instead of $20" bug.
+  const entries = rows.length;
 
   const averageChips =
     activePlayers > 0 ? Math.round(activeChips / activePlayers) : 0;
