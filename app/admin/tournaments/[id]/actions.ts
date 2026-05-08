@@ -15,6 +15,10 @@ const IdSchema = z.uuid();
 async function refresh(tournamentId: string) {
   revalidatePath("/admin");
   revalidatePath(`/admin/tournaments/${tournamentId}`);
+  // /tv is a server component pulling the active tournament; revalidate so
+  // bust / rebuy / addon / level changes show up immediately on the TV
+  // instead of waiting for the 5s drift-sync poll.
+  revalidatePath("/tv");
 }
 
 export async function pauseTournament(tournamentId: string) {

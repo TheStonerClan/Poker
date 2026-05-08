@@ -2,11 +2,7 @@ import { notFound, redirect } from "next/navigation";
 
 import { PlayerHome } from "@/components/player/PlayerHome";
 import { levelAt, parseBlindLevels } from "@/lib/player/blind-helpers";
-import type {
-  PrizeConfig,
-  PrizeRounding,
-  PrizeRule,
-} from "prize-math";
+import type { PrizeConfig } from "prize-math";
 import { computePayouts } from "prize-math";
 import { slugifyPlayerName } from "@/lib/player/slug";
 import { createClient } from "@/lib/supabase/server";
@@ -64,13 +60,16 @@ export default async function PlayerHomePage({ params }: Props) {
   );
   const currentLevel = levelAt(blindLevels, tournament.current_level);
 
-  const prizeConfig: PrizeConfig = {
-    rules: (tournament.prize_rules_snapshot as PrizeRule[]) ?? [],
-    rounding: (tournament.rounding_mode_snapshot as PrizeRounding) ?? {
-      increment: 1,
-      surplusToFirst: true,
-    },
-  };
+  // The schema stores prize_rules_snapshot as the FULL PrizeConfig object
+  // ({ rules, rounding, guarantee?, overlay? }), not just the rules array.
+  // The earlier shape ({ rules: snapshot as PrizeRule[] }) crashed during
+  // computePayouts because [...config.rules] tried to spread a plain object
+  // — that's the "can't load the page" the player saw at color-up break.
+  const prizeConfig =
+    (tournament.prize_rules_snapshot as PrizeConfig | null) ?? {
+      rules: [],
+      rounding: { increment: 1, surplusToFirst: true },
+    };
 
   const payouts = computePayouts(prizeConfig, {
     buyIns,
