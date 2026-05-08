@@ -3,7 +3,7 @@
 import { useMemo, useState, useTransition } from "react";
 
 import { updateTemplatePrizes } from "@/app/admin/templates/actions";
-import { computePayouts } from "@/lib/track-stubs/prize-math";
+import { computePayouts } from "prize-math";
 import { formatMoney } from "@/lib/admin/format";
 import type { TournamentTemplate } from "@/lib/admin/queries";
 

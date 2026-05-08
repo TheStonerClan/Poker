@@ -6,8 +6,8 @@ import type {
   PrizeConfig,
   PrizeRounding,
   PrizeRule,
-} from "@/lib/player/mock-prize-math";
-import { computePayouts } from "@/lib/player/mock-prize-math";
+} from "prize-math";
+import { computePayouts } from "prize-math";
 import { slugifyPlayerName } from "@/lib/player/slug";
 import { createClient } from "@/lib/supabase/server";
 

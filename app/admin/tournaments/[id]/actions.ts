@@ -7,7 +7,7 @@ import { z } from "zod";
 import { requireAdmin } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { blindLevels } from "@/lib/admin/queries";
-import { computePayouts } from "@/lib/track-stubs/prize-math";
+import { computePayouts } from "prize-math";
 import type { TablesUpdate } from "@/lib/database.types";
 
 const IdSchema = z.uuid();
