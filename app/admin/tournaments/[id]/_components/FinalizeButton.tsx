@@ -12,6 +12,7 @@ export function FinalizeButton({
   disabled?: boolean;
 }) {
   const [confirming, setConfirming] = useState(false);
+  const [chopTopTwo, setChopTopTwo] = useState(false);
   const [pending, start] = useTransition();
 
   if (disabled) {
@@ -37,14 +38,41 @@ export function FinalizeButton({
           <p className="text-xs text-danger">
             Snapshot results and lock the tournament?
           </p>
+
+          <label className="flex items-start gap-2 rounded-md border border-fg/15 px-3 py-2 text-sm text-fg/80">
+            <input
+              type="checkbox"
+              checked={chopTopTwo}
+              onChange={(e) => setChopTopTwo(e.target.checked)}
+              disabled={pending}
+              className="mt-1 h-4 w-4 accent-[var(--color-gold)]"
+            />
+            <span className="flex flex-col gap-0.5">
+              <span className="font-medium">
+                Chop pot — 1st &amp; 2nd tied
+              </span>
+              <span className="text-xs text-fg/60">
+                Combine the top two payouts and split evenly. Both finishers
+                get labeled &ldquo;tied for 1st&rdquo;. Use when the final two
+                players agree to chop instead of playing it out.
+              </span>
+            </span>
+          </label>
+
           <div className="flex gap-2">
             <button
               type="button"
               disabled={pending}
-              onClick={() => start(() => finalizeTournament(tournamentId))}
+              onClick={() =>
+                start(() => finalizeTournament(tournamentId, { chopTopTwo }))
+              }
               className="h-12 min-h-[44px] flex-1 rounded-md bg-danger/90 text-sm font-semibold text-bg disabled:opacity-50"
             >
-              {pending ? "Finalizing…" : "Yes, finalize"}
+              {pending
+                ? "Finalizing…"
+                : chopTopTwo
+                  ? "Yes, finalize (chopped)"
+                  : "Yes, finalize"}
             </button>
             <button
               type="button"
