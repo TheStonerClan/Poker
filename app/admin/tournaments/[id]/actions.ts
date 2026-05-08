@@ -15,6 +15,10 @@ const IdSchema = z.uuid();
 async function refresh(tournamentId: string) {
   revalidatePath("/admin");
   revalidatePath(`/admin/tournaments/${tournamentId}`);
+  // /tv is a server component pulling the active tournament; revalidate so
+  // bust / rebuy / addon / level changes show up immediately on the TV
+  // instead of waiting for the 5s drift-sync poll.
+  revalidatePath("/tv");
 }
 
 export async function pauseTournament(tournamentId: string) {
@@ -369,9 +373,20 @@ export async function decideColorUp(input: {
   await refresh(req.tournament_id);
 }
 
-export async function finalizeTournament(tournamentId: string) {
+const FinalizeOptionsSchema = z
+  .object({
+    chopTopTwo: z.boolean().optional(),
+  })
+  .optional();
+
+export async function finalizeTournament(
+  tournamentId: string,
+  options?: { chopTopTwo?: boolean },
+) {
   await requireAdmin();
   const id = IdSchema.parse(tournamentId);
+  const opts = FinalizeOptionsSchema.parse(options) ?? {};
+  const chopTopTwo = !!opts.chopTopTwo;
   const supabase = await createClient();
 
   const { data: t } = await supabase
@@ -401,16 +416,51 @@ export async function finalizeTournament(tournamentId: string) {
     },
   );
 
+  // Build the finalized payout list. If the admin opted to chop, fold the
+  // amounts at positions 1 and 2 together and split evenly. Both rows get
+  // is_chopped=true so the recap/UI can render them as "tied for 1st".
+  // Position 3+ is unchanged.
+  type FinalRow = { position: number; amount: number; isChopped: boolean };
+  let finalRows: FinalRow[];
+
+  if (chopTopTwo) {
+    const top1 = payouts.payouts.find((p) => p.position === 1);
+    const top2 = payouts.payouts.find((p) => p.position === 2);
+    if (!top1 || !top2) {
+      throw new Error(
+        "Chop requires the prize structure to define both 1st and 2nd place.",
+      );
+    }
+    const combined = top1.amount + top2.amount;
+    // Integer-dollar rounding: position 1 takes the +$1 if the combined
+    // total is odd. Avoids fractional cents in the integer schema and
+    // matches the existing "surplusToFirst" convention.
+    const lower = Math.floor(combined / 2);
+    const upper = combined - lower;
+    finalRows = payouts.payouts.map((p) => {
+      if (p.position === 1) return { position: 1, amount: upper, isChopped: true };
+      if (p.position === 2) return { position: 2, amount: lower, isChopped: true };
+      return { position: p.position, amount: p.amount, isChopped: false };
+    });
+  } else {
+    finalRows = payouts.payouts.map((p) => ({
+      position: p.position,
+      amount: p.amount,
+      isChopped: false,
+    }));
+  }
+
   const ranked = [...players].sort((a, b) => {
     const ap = a.finishing_position ?? Number.POSITIVE_INFINITY;
     const bp = b.finishing_position ?? Number.POSITIVE_INFINITY;
     return ap - bp;
   });
 
-  const distRows = payouts.payouts.map((p) => ({
+  const distRows = finalRows.map((p) => ({
     tournament_id: id,
     position: p.position,
     amount: p.amount,
+    is_chopped: p.isChopped,
     player_id: ranked[p.position - 1]?.player_id ?? null,
   }));
 
@@ -433,8 +483,9 @@ export async function finalizeTournament(tournamentId: string) {
     type: "finalize",
     payload: {
       buybacks,
-      payouts: payouts.payouts,
+      payouts: finalRows,
       effective_pool: payouts.effectivePool,
+      chopped_top_two: chopTopTwo,
     },
   });
 

@@ -5,11 +5,13 @@ export function formatMMSS(totalSec: number): string {
   return `${m.toString().padStart(2, "0")}:${r.toString().padStart(2, "0")}`;
 }
 
-export function formatBlinds(small?: number, big?: number, ante?: number): string {
+export function formatBlinds(small?: number, big?: number, _ante?: number): string {
+  // Per house preference, the TV display shows only SB/BB. The `ante`
+  // parameter is kept on the signature so existing callers don't need
+  // updating, but it's intentionally unused.
+  void _ante;
   if (small == null || big == null) return "—";
-  const left = `${small.toLocaleString()} / ${big.toLocaleString()}`;
-  if (ante == null || ante === 0) return left;
-  return `${left} / (${ante.toLocaleString()})`;
+  return `${small.toLocaleString()} / ${big.toLocaleString()}`;
 }
 
 export function formatMoney(value: number): string {

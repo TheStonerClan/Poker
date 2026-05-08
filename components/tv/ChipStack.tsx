@@ -15,11 +15,14 @@ const CHIP_FILL: Record<string, string> = {
 };
 
 const CHIP_STRIPE: Record<string, string> = {
-  white: "#cc2e2e",
+  // House chips: white-on-grey for $1, black-on-white for $100, plus
+  // sensible defaults for the other denominations so the stripes contrast
+  // against the body color.
+  white: "#7a7a7a",
   red: "#f1ece1",
   blue: "#f1ece1",
   green: "#f1ece1",
-  black: "#cc2e2e",
+  black: "#f1ece1",
   yellow: "#1a1a1a",
   purple: "#f1ece1",
   pink: "#1a1a1a",
