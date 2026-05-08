@@ -33,17 +33,26 @@ type Props = {
   tournamentId: string;
   initialTournament: TournamentRow;
   initialPlayers: TournamentPlayerWithName[];
+  initialEvents?: TournamentEvent[];
   playSessionBaseUrl: string;
+};
+
+type TournamentEvent = {
+  type: string;
+  payload: Record<string, unknown> | null;
+  created_at: string;
 };
 
 export default function TvDisplay({
   tournamentId,
   initialTournament,
   initialPlayers,
+  initialEvents = [],
   playSessionBaseUrl,
 }: Props) {
   const [tournament, setTournament] = useState<TournamentRow>(initialTournament);
   const [players, setPlayers] = useState<TournamentPlayerWithName[]>(initialPlayers);
+  const [events, setEvents] = useState<TournamentEvent[]>(initialEvents);
 
   const onTournament = useCallback((row: Record<string, unknown>) => {
     setTournament((prev) => ({ ...prev, ...(row as TournamentRow) }));
@@ -55,8 +64,12 @@ export default function TvDisplay({
         cache: "no-store",
       });
       if (!res.ok) return;
-      const json = (await res.json()) as { players?: TournamentPlayerWithName[] };
+      const json = (await res.json()) as {
+        players?: TournamentPlayerWithName[];
+        events?: TournamentEvent[];
+      };
       if (json.players) setPlayers(json.players);
+      if (json.events) setEvents(json.events);
     } catch {
       // Network blip during a refresh — keep the previous snapshot. The
       // realtime channel or the next 5s drift sync will retry.
@@ -116,39 +129,85 @@ export default function TvDisplay({
       isBreak && currentLevel?.level_num === buyback.addOnAtBreakLevel,
   });
 
-  // Bust list for the previous segment (since the most recent break_end
-  // event isn't readily available, fall back to "all bust-outs at or below
-  // the just-completed level"). Good enough for the TV during the break.
+  // Bust list for the previous segment, derived from `tournament_events`
+  // rather than `tournament_players`. The latter clears `busted_at_time`
+  // on rebuy, which would mask the original bust from the segment count;
+  // events are append-only and survive rebuys correctly.
+  //
+  // "Last segment" = since the most recent break_start (or break_end —
+  // whichever is later). Falls back to "all busts so far" when there's
+  // been no break yet.
+  const lastSegmentBoundary = (() => {
+    for (let i = events.length - 1; i >= 0; i--) {
+      const e = events[i];
+      if (e.type === "break_start" || e.type === "break_end") {
+        return new Date(e.created_at).getTime();
+      }
+    }
+    return 0;
+  })();
+
+  const playerNameById = new Map(
+    players
+      .filter((p) => p.players?.name)
+      .map((p) => [p.player_id, p.players?.name ?? ""]),
+  );
+  const playerStateById = new Map(
+    players.map((p) => [p.player_id, p]),
+  );
+
   const lastSegmentBusted = isBreak
-    ? players
-        .filter((p) => p.busted_at_time != null)
-        .sort((a, b) => {
-          const at = new Date(a.busted_at_time ?? 0).getTime();
-          const bt = new Date(b.busted_at_time ?? 0).getTime();
-          return bt - at;
+    ? events
+        .filter(
+          (e) =>
+            e.type === "bust" &&
+            new Date(e.created_at).getTime() >= lastSegmentBoundary,
+        )
+        .slice(-12)
+        .reverse()
+        .map((e) => {
+          const playerId = (e.payload?.player_id as string | undefined) ?? null;
+          const atLevel =
+            (e.payload?.at_level as number | undefined | null) ?? null;
+          const player = playerId ? playerStateById.get(playerId) : undefined;
+          // "Rebought" reflects the player's CURRENT state — they busted in
+          // this segment but may have rebought since. Useful info on the
+          // break panel without losing the bust from the count.
+          const rebought = !!(
+            player?.buyback_used && player.buyback_used_as === "rebuy"
+          );
+          return {
+            name:
+              (playerId ? playerNameById.get(playerId) : null) ??
+              "Unknown",
+            level: atLevel,
+            rebought,
+          };
         })
-        .slice(0, 12)
-        .map((p) => ({
-          name: p.players?.name ?? `Seat ${p.seat_number ?? "?"}`,
-          level: p.busted_at_level,
-          rebought: p.buyback_used && p.buyback_used_as === "rebuy",
-        }))
     : [];
+
+  // Show the add-ons counter once the add-on break has either started or
+  // passed (per the buyback config). Before then it'd just read zero and
+  // crowd the header. After then it stays visible so admin / players can
+  // see how many add-ons were used at a glance.
+  const showAddOns =
+    typeof buyback.addOnAtBreakLevel === "number" &&
+    (currentLevel?.level_num ?? 0) >= buyback.addOnAtBreakLevel;
 
   return (
     <div className="min-h-screen bg-bg text-fg flex flex-col">
       {/* TOP BAND */}
-      <header className="grid grid-cols-2 items-center px-12 pt-8 pb-6">
-        <PlayerHeader counts={counts} />
+      <header className="grid grid-cols-2 items-center px-[clamp(1rem,3vw,3rem)] pt-[clamp(0.75rem,2vh,2rem)] pb-[clamp(0.5rem,1.5vh,1.5rem)]">
+        <PlayerHeader counts={counts} showAddOns={showAddOns} />
         <div className="justify-self-end">
           <BlindLevel level={currentLevel} align="right" />
         </div>
       </header>
 
-      <hr className="border-t border-gold/40 mx-8" />
+      <hr className="border-t border-gold/40 mx-[clamp(0.5rem,2vw,2rem)]" />
 
       {/* MIDDLE BAND */}
-      <main className="flex-1 grid grid-cols-[1fr_auto_1fr] items-center px-12 py-8 gap-8">
+      <main className="flex-1 grid grid-cols-[1fr_auto_1fr] items-center px-[clamp(1rem,3vw,3rem)] py-[clamp(0.75rem,2vh,2rem)] gap-[clamp(0.75rem,2vw,2rem)]">
         <div className="self-center justify-self-start">
           <ChipStack denominations={denominations} />
         </div>
@@ -177,10 +236,10 @@ export default function TvDisplay({
         </div>
       </main>
 
-      <hr className="border-t border-gold/40 mx-8" />
+      <hr className="border-t border-gold/40 mx-[clamp(0.5rem,2vw,2rem)]" />
 
       {/* BOTTOM BAND */}
-      <footer className="grid grid-cols-3 items-end px-12 pt-6 pb-4 gap-8">
+      <footer className="grid grid-cols-3 items-end px-[clamp(1rem,3vw,3rem)] pt-[clamp(0.5rem,1.5vh,1.5rem)] pb-[clamp(0.5rem,1vh,1rem)] gap-[clamp(0.75rem,2vw,2rem)]">
         <StackStats counts={counts} bigBlind={currentLevel?.big} />
 
         <div className="justify-self-center">

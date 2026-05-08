@@ -188,6 +188,21 @@ export async function bustPlayer(input: { tournamentPlayerId: string }) {
     .eq("id", tp.tournament_id)
     .maybeSingle();
 
+  // Compute the player's finishing position. The 1st-to-bust in a 10-player
+  // field finishes 10th, the 2nd-to-bust finishes 9th, … last-to-bust
+  // finishes 2nd, the survivor is 1st. So the busted player's position is
+  // the count of currently-active players (including this one, before we
+  // mark them out).
+  const { data: roster } = await supabase
+    .from("tournament_players")
+    .select("id, busted_at_time")
+    .eq("tournament_id", tp.tournament_id);
+
+  const activeBeforeBust = (roster ?? []).filter(
+    (r) => r.id === tournamentPlayerId || !r.busted_at_time,
+  ).length;
+  const finishingPosition = activeBeforeBust;
+
   const now = new Date().toISOString();
   const { error } = await supabase
     .from("tournament_players")
@@ -195,6 +210,7 @@ export async function bustPlayer(input: { tournamentPlayerId: string }) {
       busted_at_level: t?.current_level ?? null,
       busted_at_time: now,
       current_chips: 0,
+      finishing_position: finishingPosition,
     })
     .eq("id", tournamentPlayerId);
   if (error) throw new Error(error.message);
@@ -206,8 +222,34 @@ export async function bustPlayer(input: { tournamentPlayerId: string }) {
       tournament_player_id: tournamentPlayerId,
       player_id: tp.player_id,
       at_level: t?.current_level ?? null,
+      finishing_position: finishingPosition,
     },
   });
+
+  // Auto-finalize when only one player remains. Set the survivor's
+  // finishing_position=1 and run the same finalize logic the manual button
+  // would, except we redirect to the live page (recap) instead of the
+  // dashboard so the admin sees the result without an extra click.
+  const survivors = (roster ?? []).filter(
+    (r) => r.id !== tournamentPlayerId && !r.busted_at_time,
+  );
+  if (survivors.length === 1) {
+    const winnerId = survivors[0].id;
+    await supabase
+      .from("tournament_players")
+      .update({ finishing_position: 1 })
+      .eq("id", winnerId);
+
+    await performFinalize(supabase, tp.tournament_id, {
+      chopTopTwo: false,
+      autoFromLastBust: true,
+    });
+
+    revalidatePath("/admin");
+    revalidatePath(`/admin/tournaments/${tp.tournament_id}`);
+    revalidatePath("/tv");
+    return;
+  }
 
   await refresh(tp.tournament_id);
 }
@@ -256,6 +298,11 @@ export async function rebuyPlayer(input: { tournamentPlayerId: string }) {
       buyback_used_at_time: now,
       busted_at_level: null,
       busted_at_time: null,
+      // The player is back in play; their previous finishing_position
+      // (assigned when they busted) no longer applies. Leaving it set
+      // would also conflict with the unique-position index when another
+      // player later busts into that slot.
+      finishing_position: null,
       current_chips: chips,
     })
     .eq("id", tournamentPlayerId);
@@ -379,22 +426,26 @@ const FinalizeOptionsSchema = z
   })
   .optional();
 
-export async function finalizeTournament(
-  tournamentId: string,
-  options?: { chopTopTwo?: boolean },
-) {
-  await requireAdmin();
-  const id = IdSchema.parse(tournamentId);
-  const opts = FinalizeOptionsSchema.parse(options) ?? {};
-  const chopTopTwo = !!opts.chopTopTwo;
-  const supabase = await createClient();
+type SupabaseAny = Awaited<ReturnType<typeof createClient>>;
 
+/**
+ * Core finalize logic, factored out so both the manual finalize action and
+ * the auto-finalize-on-last-bust path can call it without duplicating the
+ * pool math. Doesn't redirect — caller handles navigation. Doesn't gate on
+ * roster size — caller is responsible for that (auto-finalize: exactly 1
+ * survivor; manual: exactly 2 in-play).
+ */
+async function performFinalize(
+  supabase: SupabaseAny,
+  tournamentId: string,
+  options: { chopTopTwo: boolean; autoFromLastBust?: boolean },
+): Promise<void> {
   const { data: t } = await supabase
     .from("tournaments")
     .select(
       "id, prize_rules_snapshot, buy_in_snapshot, status, finished_at",
     )
-    .eq("id", id)
+    .eq("id", tournamentId)
     .maybeSingle();
   if (!t) throw new Error("Tournament not found");
   if (t.finished_at) throw new Error("Already finalized");
@@ -402,7 +453,7 @@ export async function finalizeTournament(
   const { data: roster } = await supabase
     .from("tournament_players")
     .select("id, player_id, buyback_used, busted_at_time, finishing_position")
-    .eq("tournament_id", id);
+    .eq("tournament_id", tournamentId);
 
   const players = roster ?? [];
   const buybacks = players.filter((p) => p.buyback_used).length;
@@ -423,7 +474,7 @@ export async function finalizeTournament(
   type FinalRow = { position: number; amount: number; isChopped: boolean };
   let finalRows: FinalRow[];
 
-  if (chopTopTwo) {
+  if (options.chopTopTwo) {
     const top1 = payouts.payouts.find((p) => p.position === 1);
     const top2 = payouts.payouts.find((p) => p.position === 2);
     if (!top1 || !top2) {
@@ -433,8 +484,7 @@ export async function finalizeTournament(
     }
     const combined = top1.amount + top2.amount;
     // Integer-dollar rounding: position 1 takes the +$1 if the combined
-    // total is odd. Avoids fractional cents in the integer schema and
-    // matches the existing "surplusToFirst" convention.
+    // total is odd. Matches the existing surplusToFirst convention.
     const lower = Math.floor(combined / 2);
     const upper = combined - lower;
     finalRows = payouts.payouts.map((p) => {
@@ -457,7 +507,7 @@ export async function finalizeTournament(
   });
 
   const distRows = finalRows.map((p) => ({
-    tournament_id: id,
+    tournament_id: tournamentId,
     position: p.position,
     amount: p.amount,
     is_chopped: p.isChopped,
@@ -475,20 +525,54 @@ export async function finalizeTournament(
   const { error } = await supabase
     .from("tournaments")
     .update({ status: "finished", finished_at: finishedAt })
-    .eq("id", id);
+    .eq("id", tournamentId);
   if (error) throw new Error(error.message);
 
   await supabase.from("tournament_events").insert({
-    tournament_id: id,
+    tournament_id: tournamentId,
     type: "finalize",
     payload: {
       buybacks,
       payouts: finalRows,
       effective_pool: payouts.effectivePool,
-      chopped_top_two: chopTopTwo,
+      chopped_top_two: options.chopTopTwo,
+      auto: options.autoFromLastBust ?? false,
     },
   });
+}
+
+export async function finalizeTournament(
+  tournamentId: string,
+  options?: { chopTopTwo?: boolean },
+) {
+  await requireAdmin();
+  const id = IdSchema.parse(tournamentId);
+  const opts = FinalizeOptionsSchema.parse(options) ?? {};
+  const chopTopTwo = !!opts.chopTopTwo;
+  const supabase = await createClient();
+
+  // Manual-finalize gating: only allow when exactly 2 players are still
+  // in play. 1-or-fewer means the auto-finalize path on the last bust
+  // already handled (or should handle) it; 3+ means the tournament isn't
+  // close enough to its end to call. This makes the "chop pot" UX safe:
+  // chop is only ever offered when there are 2 left, and the manual
+  // button is hidden otherwise.
+  const { data: roster } = await supabase
+    .from("tournament_players")
+    .select("id, busted_at_time")
+    .eq("tournament_id", id);
+  const inPlay = (roster ?? []).filter((r) => !r.busted_at_time).length;
+
+  if (inPlay !== 2) {
+    throw new Error(
+      `Manual finalize is only available with exactly 2 players still in play (currently ${inPlay}). The last bust auto-finalizes; if more than 2 are in, keep playing.`,
+    );
+  }
+
+  await performFinalize(supabase, id, { chopTopTwo });
 
   revalidatePath("/admin");
+  revalidatePath(`/admin/tournaments/${id}`);
+  revalidatePath("/tv");
   redirect("/admin");
 }

@@ -179,7 +179,11 @@ export default async function LiveTournamentPage({
             Lock results, snapshot prize distribution, and reset for the next
             tournament. Cannot be undone.
           </p>
-          <FinalizeButton tournamentId={tournament.id} disabled={tournament.finished_at != null} />
+          <FinalizeButton
+            tournamentId={tournament.id}
+            disabled={tournament.finished_at != null}
+            inPlayCount={inPlay.length}
+          />
         </section>
       </main>
     </>
