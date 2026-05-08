@@ -4,6 +4,12 @@
 // All outbound messages are prefixed with "[PokerBot] " so recipients can
 // identify the source at a glance and filter on it if needed.
 //
+// Reminder cron contract: any job that schedules messages off the recurring
+// tournament rule MUST resolve the date through lib/schedule/next-night.ts
+// (`resolveNextNight`). That resolver folds in admin-set one-off overrides
+// (move / cancel) from the schedule_overrides table, so reminders fire on
+// the actual next poker night rather than the unmodified rule output.
+//
 // Required env (server-side only — never expose to the browser):
 //   SIGNAL_BRIDGE_URL      e.g. https://signal.holdemclock.com
 //   SIGNAL_BRIDGE_SECRET   shared HMAC secret matching the proxy container
