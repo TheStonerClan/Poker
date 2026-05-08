@@ -145,6 +145,7 @@ export type Database = {
           amount: number
           created_at: string
           id: string
+          is_chopped: boolean
           paid_at: string | null
           player_id: string | null
           position: number
@@ -154,6 +155,7 @@ export type Database = {
           amount: number
           created_at?: string
           id?: string
+          is_chopped?: boolean
           paid_at?: string | null
           player_id?: string | null
           position: number
@@ -163,6 +165,7 @@ export type Database = {
           amount?: number
           created_at?: string
           id?: string
+          is_chopped?: boolean
           paid_at?: string | null
           player_id?: string | null
           position?: number
