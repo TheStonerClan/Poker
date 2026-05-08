@@ -23,7 +23,7 @@ export function SignalCard({
       </div>
       <p className="mt-2 text-sm text-fg/70">
         {configured
-          ? "Bridge URL is set. Recap and reminder messages will go out when the cron is enabled."
+          ? "Bridge URL is set. Recap and reminder messages will go out when the cron is enabled — they'll fire against the next poker night below, honoring any one-off move."
           : "Run the signal-cli bridge on the Mac Mini and set SIGNAL_BRIDGE_URL + SIGNAL_BRIDGE_SECRET in Vercel."}
       </p>
       <dl className="mt-3 grid grid-cols-1 gap-2 text-sm">

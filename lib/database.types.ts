@@ -185,6 +185,47 @@ export type Database = {
           },
         ]
       }
+      schedule_overrides: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          id: string
+          note: string | null
+          original_date: string
+          overridden_date: string | null
+          template_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          note?: string | null
+          original_date: string
+          overridden_date?: string | null
+          template_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          note?: string | null
+          original_date?: string
+          overridden_date?: string | null
+          template_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "schedule_overrides_template_id_fkey"
+            columns: ["template_id"]
+            isOneToOne: false
+            referencedRelation: "tournament_templates"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       tournament_events: {
         Row: {
           created_at: string

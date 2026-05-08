@@ -37,6 +37,8 @@
     "lib/prize-math",
     "lib/color-up",
     "lib/uht-import",
-    "scripts/signal-cli/proxy"
+    "scripts/signal-cli/proxy",
+    "**/*.test.ts",
+    "**/*.test.tsx"
   ]
 }
