@@ -1,11 +1,18 @@
 import { headers } from "next/headers";
 
 import TvDisplay from "@/components/tv/TvDisplay";
+import TvRecap from "@/components/tv/TvRecap";
 import { createServiceClient } from "@/lib/supabase/service";
 import type {
   TournamentPlayerWithName,
   TournamentRow,
 } from "@/lib/tv/types";
+
+// How long after `finished_at` the TV keeps showing the recap. After this
+// the screen falls back to the "waiting for tournament" state. 6 hours is
+// long enough to cover a slow late-night settle-up but short enough that
+// the next morning the screen is clean.
+const RECAP_WINDOW_MS = 6 * 60 * 60 * 1000;
 
 // The TV display reads live state (active tournament, headers for the QR
 // origin); never prerender it at build time.
@@ -54,38 +61,92 @@ export default async function TvPage() {
     .maybeSingle();
 
   if (!tournament) {
-    return <WaitingScreen />;
+    // No active tournament — check if there's a recently-finalized one to
+    // show as a recap. Anything finished within RECAP_WINDOW_MS is fair
+    // game; older results live on /admin/history.
+    const recapCutoff = new Date(Date.now() - RECAP_WINDOW_MS).toISOString();
+    const { data: recapTournament } = await supabase
+      .from("tournaments")
+      .select("*")
+      .eq("status", "finished")
+      .gte("finished_at", recapCutoff)
+      .order("finished_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (!recapTournament) {
+      return <WaitingScreen />;
+    }
+
+    const recapRow = recapTournament as TournamentRow;
+    const [{ data: recapPlayers }, { data: recapPayouts }] = await Promise.all([
+      supabase
+        .from("tournament_players")
+        .select(
+          "id, player_id, current_chips, buyback_used, buyback_used_as, busted_at_level, busted_at_time, finishing_position, payout_amount, players(id, name)",
+        )
+        .eq("tournament_id", recapRow.id),
+      supabase
+        .from("prize_distributions")
+        .select("position, amount, player_id, is_chopped")
+        .eq("tournament_id", recapRow.id)
+        .order("position", { ascending: true }),
+    ]);
+
+    return (
+      <TvRecap
+        tournament={recapRow}
+        players={(recapPlayers ?? []) as unknown as TournamentPlayerWithName[]}
+        payouts={recapPayouts ?? []}
+      />
+    );
   }
 
   const tournamentRow = tournament as TournamentRow;
 
-  const { data: players } = await supabase
-    .from("tournament_players")
-    .select(
-      `
-        id,
-        tournament_id,
-        player_id,
-        seat_number,
-        current_chips,
-        buyback_used,
-        buyback_used_as,
-        buyback_used_at_level,
-        buyback_used_at_time,
-        busted_at_level,
-        busted_at_time,
-        finishing_position,
-        payout_amount,
-        claimed_session_id,
-        claimed_at,
-        created_at,
-        updated_at,
-        players ( id, name )
-      `,
-    )
-    .eq("tournament_id", tournamentRow.id);
+  const [{ data: players }, { data: events }] = await Promise.all([
+    supabase
+      .from("tournament_players")
+      .select(
+        `
+          id,
+          tournament_id,
+          player_id,
+          seat_number,
+          current_chips,
+          buyback_used,
+          buyback_used_as,
+          buyback_used_at_level,
+          buyback_used_at_time,
+          busted_at_level,
+          busted_at_time,
+          finishing_position,
+          payout_amount,
+          claimed_session_id,
+          claimed_at,
+          created_at,
+          updated_at,
+          players ( id, name )
+        `,
+      )
+      .eq("tournament_id", tournamentRow.id),
+    // Bust + break events power the TV's "last segment" bust counter so it
+    // survives rebuys (which clear busted_at_time on the player row).
+    supabase
+      .from("tournament_events")
+      .select("type, payload, created_at")
+      .eq("tournament_id", tournamentRow.id)
+      .in("type", ["bust", "break_start", "break_end"])
+      .order("created_at", { ascending: true })
+      .limit(500),
+  ]);
 
   const initialPlayers = (players ?? []) as unknown as TournamentPlayerWithName[];
+  const initialEvents = (events ?? []) as Array<{
+    type: string;
+    payload: Record<string, unknown> | null;
+    created_at: string;
+  }>;
 
   // Build the player-view base URL from the request host so QR codes work in
   // any environment (localhost, staging, prod) without a separate env var.
@@ -98,6 +159,7 @@ export default async function TvPage() {
       tournamentId={tournamentRow.id}
       initialTournament={tournamentRow}
       initialPlayers={initialPlayers}
+      initialEvents={initialEvents}
       playSessionBaseUrl={playSessionBaseUrl}
     />
   );

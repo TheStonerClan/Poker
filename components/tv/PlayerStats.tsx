@@ -3,14 +3,25 @@ import type { PlayerCounts } from "@/lib/tv/types";
 
 type HeadProps = {
   counts: PlayerCounts;
+  /**
+   * When true, surface the Add-ons counter alongside Re-Entries. Set this
+   * once the add-on break has arrived — before that the column reads zero
+   * and clutters the header.
+   */
+  showAddOns?: boolean;
 };
 
-export function PlayerHeader({ counts }: HeadProps) {
+export function PlayerHeader({ counts, showAddOns = false }: HeadProps) {
   return (
-    <div className="grid grid-cols-3 gap-x-8 gap-y-1">
+    <div
+      className={`grid ${showAddOns ? "grid-cols-4" : "grid-cols-3"} gap-x-[clamp(1rem,2vw,2rem)] gap-y-1`}
+    >
       <Stat label="Players" value={counts.players.toString()} />
       <Stat label="Entries" value={counts.entries.toString()} />
       <Stat label="Re-Entries" value={counts.reEntries.toString()} />
+      {showAddOns ? (
+        <Stat label="Add-ons" value={counts.addOns.toString()} />
+      ) : null}
     </div>
   );
 }
