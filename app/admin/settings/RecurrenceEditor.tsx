@@ -2,12 +2,12 @@
 
 import { useMemo, useState, useTransition } from "react";
 
-import { describe, nextOccurrence } from "@/lib/track-stubs/recurrence";
+import { describe, nextOccurrence } from "@poker/recurrence";
 import type {
   NthWeekday,
   RecurrenceRule,
   Weekday,
-} from "@/lib/track-stubs/recurrence";
+} from "@poker/recurrence";
 
 type EditableRule =
   | { kind: "nthWeekdayOfMonth"; nth: NthWeekday; weekday: Weekday }

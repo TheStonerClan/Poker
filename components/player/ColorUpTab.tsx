@@ -6,7 +6,7 @@ import { submitColorUpRequest } from "@/app/play/[sessionId]/actions";
 import {
   computeExchange,
   type ComputeExchangeResult,
-} from "@/lib/player/mock-color-up";
+} from "@poker/color-up";
 import { getOrCreateAnonSession } from "@/lib/presence";
 
 type Props = {

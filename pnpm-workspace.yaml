@@ -1,3 +1,9 @@
+packages:
+  - "lib/prize-math"
+  - "lib/color-up"
+  - "lib/recurrence"
+  - "lib/uht-import"
+
 ignoredBuiltDependencies:
   - sharp
   - unrs-resolver

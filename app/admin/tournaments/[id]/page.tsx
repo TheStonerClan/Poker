@@ -11,7 +11,7 @@ import {
   nextLevel,
 } from "@/lib/admin/queries";
 import { formatBlinds, formatChips, formatMoney } from "@/lib/admin/format";
-import { computePayouts } from "@/lib/track-stubs/prize-math";
+import { computePayouts } from "prize-math";
 
 import { LevelControls } from "../../_components/LevelControls";
 import { PlayerGrid } from "./_components/PlayerGrid";

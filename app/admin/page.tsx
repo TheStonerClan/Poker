@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 import { TopBar } from "@/components/admin/TopBar";
-import { computePayouts } from "@/lib/track-stubs/prize-math";
+import { computePayouts } from "prize-math";
 import {
   currentLevel,
   getActiveTournament,
