@@ -280,6 +280,7 @@ export type Database = {
           player_id: string
           rebuys_used: number
           seat_number: number | null
+          table_number: number | null
           tournament_id: string
           updated_at: string
         }
@@ -301,6 +302,7 @@ export type Database = {
           player_id: string
           rebuys_used?: number
           seat_number?: number | null
+          table_number?: number | null
           tournament_id: string
           updated_at?: string
         }
@@ -322,6 +324,7 @@ export type Database = {
           player_id?: string
           rebuys_used?: number
           seat_number?: number | null
+          table_number?: number | null
           tournament_id?: string
           updated_at?: string
         }
@@ -434,6 +437,8 @@ export type Database = {
           level_paused_at: string | null
           level_started_at: string | null
           max_rebuys_snapshot: number
+          max_seats_per_table: number | null
+          num_tables: number | null
           prize_rules_snapshot: Json
           rebuy_chips_snapshot: number
           rebuy_price_snapshot: number
@@ -461,6 +466,8 @@ export type Database = {
           level_paused_at?: string | null
           level_started_at?: string | null
           max_rebuys_snapshot: number
+          max_seats_per_table?: number | null
+          num_tables?: number | null
           prize_rules_snapshot: Json
           rebuy_chips_snapshot: number
           rebuy_price_snapshot: number
@@ -488,6 +495,8 @@ export type Database = {
           level_paused_at?: string | null
           level_started_at?: string | null
           max_rebuys_snapshot?: number
+          max_seats_per_table?: number | null
+          num_tables?: number | null
           prize_rules_snapshot?: Json
           rebuy_chips_snapshot?: number
           rebuy_price_snapshot?: number

@@ -1,13 +1,14 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 
 import type { Player, TournamentTemplate } from "@/lib/admin/queries";
 import { formatChips, formatMoney } from "@/lib/admin/format";
+import { suggestTableSplit } from "@/lib/admin/tables";
 
 import { startTournament } from "./actions";
 
-type Step = "template" | "confirm" | "players";
+type Step = "template" | "confirm" | "players" | "tables";
 
 export function NewTournamentWizard({
   templates,
@@ -19,6 +20,9 @@ export function NewTournamentWizard({
   const [step, setStep] = useState<Step>("template");
   const [templateId, setTemplateId] = useState<string>(templates[0]?.id ?? "");
   const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [numTables, setNumTables] = useState<number>(1);
+  const [maxSeats, setMaxSeats] = useState<number>(9);
+  const [tablesTouched, setTablesTouched] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
 
@@ -26,6 +30,16 @@ export function NewTournamentWizard({
     () => templates.find((t) => t.id === templateId) ?? null,
     [templates, templateId],
   );
+
+  // Suggest sensible table defaults based on the picked-player count, but
+  // only until the admin manually adjusts. Once they touch either field,
+  // stop overriding so we don't fight the user's input.
+  useEffect(() => {
+    if (tablesTouched) return;
+    const suggestion = suggestTableSplit(picked.size);
+    setNumTables(suggestion.numTables);
+    setMaxSeats(suggestion.maxSeatsPerTable);
+  }, [picked.size, tablesTouched]);
 
   return (
     <div className="flex flex-1 flex-col gap-4">
@@ -61,6 +75,24 @@ export function NewTournamentWizard({
             })
           }
           onBack={() => setStep("confirm")}
+          onNext={() => setStep("tables")}
+        />
+      ) : null}
+
+      {step === "tables" && template ? (
+        <TablesStep
+          playerCount={picked.size}
+          numTables={numTables}
+          maxSeats={maxSeats}
+          onChangeNumTables={(n) => {
+            setTablesTouched(true);
+            setNumTables(n);
+          }}
+          onChangeMaxSeats={(n) => {
+            setTablesTouched(true);
+            setMaxSeats(n);
+          }}
+          onBack={() => setStep("players")}
           error={error}
           pending={pending}
           onStart={() => {
@@ -69,6 +101,8 @@ export function NewTournamentWizard({
               const res = await startTournament({
                 templateId: template.id,
                 playerIds: [...picked],
+                numTables,
+                maxSeatsPerTable: maxSeats,
               });
               if (res.status === "error") setError(res.message ?? "Could not start.");
             });
@@ -84,6 +118,7 @@ function Stepper({ step }: { step: Step }) {
     ["template", "Template"],
     ["confirm", "Settings"],
     ["players", "Players"],
+    ["tables", "Tables"],
   ];
   const active = labels.findIndex(([s]) => s === step);
   return (
@@ -250,17 +285,13 @@ function PlayersStep({
   picked,
   onToggle,
   onBack,
-  onStart,
-  pending,
-  error,
+  onNext,
 }: {
   players: Player[];
   picked: Set<string>;
   onToggle: (id: string) => void;
   onBack: () => void;
-  onStart: () => void;
-  pending: boolean;
-  error: string | null;
+  onNext: () => void;
 }) {
   return (
     <>
@@ -306,8 +337,97 @@ function PlayersStep({
         </ul>
       )}
 
+      <StickyActions>
+        <button
+          type="button"
+          onClick={onBack}
+          className="h-12 min-h-[44px] flex-1 rounded-md border border-fg/15 text-sm font-semibold text-fg/80"
+        >
+          Back
+        </button>
+        <button
+          type="button"
+          onClick={onNext}
+          disabled={picked.size < 2}
+          className="h-12 min-h-[44px] flex-1 rounded-md bg-gold text-sm font-semibold text-bg disabled:opacity-50"
+        >
+          Configure tables ({picked.size})
+        </button>
+      </StickyActions>
+    </>
+  );
+}
+
+function TablesStep({
+  playerCount,
+  numTables,
+  maxSeats,
+  onChangeNumTables,
+  onChangeMaxSeats,
+  onBack,
+  onStart,
+  pending,
+  error,
+}: {
+  playerCount: number;
+  numTables: number;
+  maxSeats: number;
+  onChangeNumTables: (n: number) => void;
+  onChangeMaxSeats: (n: number) => void;
+  onBack: () => void;
+  onStart: () => void;
+  pending: boolean;
+  error: string | null;
+}) {
+  const cap = numTables * maxSeats;
+  const fits = playerCount <= cap;
+  const playersPerTableLow = Math.floor(playerCount / numTables);
+  const playersPerTableHigh = Math.ceil(playerCount / numTables);
+  const distribution =
+    playersPerTableLow === playersPerTableHigh
+      ? `${playersPerTableLow} per table`
+      : `${playersPerTableHigh} at ${playerCount % numTables} table${
+          playerCount % numTables === 1 ? "" : "s"
+        } / ${playersPerTableLow} at the rest`;
+
+  return (
+    <>
+      <section className="flex flex-col gap-3 rounded-lg border border-fg/10 p-4">
+        <p className="text-sm text-fg/70">
+          {playerCount} player{playerCount === 1 ? "" : "s"} will be randomized
+          across the tables when you start.{" "}
+          {fits ? <span>{distribution}.</span> : null}
+        </p>
+
+        <div className="grid grid-cols-2 gap-3">
+          <NumberField
+            label="Tables"
+            value={numTables}
+            min={1}
+            max={10}
+            onChange={onChangeNumTables}
+          />
+          <NumberField
+            label="Max seats / table"
+            value={maxSeats}
+            min={2}
+            max={10}
+            onChange={onChangeMaxSeats}
+          />
+        </div>
+
+        <p className={`text-xs ${fits ? "text-fg/55" : "text-danger"}`}>
+          {fits
+            ? `${cap} seats total — ${cap - playerCount} empty.`
+            : `Only ${cap} seats configured for ${playerCount} players. Add a table or raise the seat cap.`}
+        </p>
+      </section>
+
       {error ? (
-        <p role="alert" className="rounded-md border border-danger/60 bg-danger/10 px-3 py-2 text-sm text-danger">
+        <p
+          role="alert"
+          className="rounded-md border border-danger/60 bg-danger/10 px-3 py-2 text-sm text-danger"
+        >
           {error}
         </p>
       ) : null}
@@ -324,13 +444,47 @@ function PlayersStep({
         <button
           type="button"
           onClick={onStart}
-          disabled={pending || picked.size < 2}
+          disabled={pending || !fits || playerCount < 2}
           className="h-12 min-h-[44px] flex-1 rounded-md bg-gold text-sm font-semibold text-bg disabled:opacity-50"
         >
-          {pending ? "Starting…" : `Start (${picked.size})`}
+          {pending ? "Starting…" : `Start (${playerCount})`}
         </button>
       </StickyActions>
     </>
+  );
+}
+
+function NumberField({
+  label,
+  value,
+  min,
+  max,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  onChange: (n: number) => void;
+}) {
+  return (
+    <label className="flex flex-col gap-1.5">
+      <span className="text-[10px] font-semibold uppercase tracking-widest text-fg/60">
+        {label}
+      </span>
+      <input
+        type="number"
+        inputMode="numeric"
+        min={min}
+        max={max}
+        value={value}
+        onChange={(e) => {
+          const n = Number.parseInt(e.target.value, 10);
+          if (Number.isFinite(n) && n >= min && n <= max) onChange(n);
+        }}
+        className="min-h-[44px] rounded-md border border-fg/15 bg-bg px-3 text-base text-fg focus:border-gold focus:outline-none"
+      />
+    </label>
   );
 }
 
