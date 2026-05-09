@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 
+import { safeRandomId } from "@/lib/safe-uuid";
 import { createClient } from "@/lib/supabase/client";
 
 import { presenceChannelName, type PresencePayload } from "./types";
@@ -25,7 +26,7 @@ export function useTournamentPresence(sessionId: string): {
   useEffect(() => {
     const supabase = createClient();
     const channel = supabase.channel(presenceChannelName(sessionId), {
-      config: { presence: { key: `observer-${crypto.randomUUID()}` } },
+      config: { presence: { key: `observer-${safeRandomId()}` } },
     });
 
     function refresh() {
