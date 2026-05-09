@@ -14,14 +14,27 @@ export type DriftSyncOptions = {
 /**
  * Realtime + periodic drift sync for the TV display.
  *
- * - Subscribes to UPDATE on `tournaments` (for level/status/timer changes)
- *   and INSERT/UPDATE/DELETE on `tournament_players` (for counts and chips).
- * - Every `intervalMs` (default 5s), polls the latest `tournaments` row to
- *   correct any clock drift if a realtime event was missed.
+ * Channels:
+ *
+ * - `tournaments` UPDATE — level / status / timer changes.
+ * - `tournament_players` * (INSERT/UPDATE/DELETE) — counts, chips,
+ *   table assignments, busts, rebuys, color-up exchanges.
+ * - `tournament_events` INSERT — bust / rebuy / addon / merge / balance
+ *   admin actions all write here. Each insert triggers an `onPlayers`
+ *   refetch, which catches the cases where Supabase realtime is slow
+ *   to deliver the matching `tournament_players` row updates (multi-
+ *   row admin actions like Merge can get batched on the wire and
+ *   appear to "drop" until the next poll).
+ *
+ * Falls back to a `intervalMs` (default 3s) drift poll for both the
+ * tournament and the player list, in case realtime drops a message
+ * entirely. Tightened from 5s → 3s after the user reported having to
+ * hard-refresh the TV after a merge — three layers of belt-and-
+ * suspenders so screen state never lags by more than a few seconds.
  */
 export function useDriftSync({
   tournamentId,
-  intervalMs = 5000,
+  intervalMs = 3000,
   onTournament,
   onPlayers,
 }: DriftSyncOptions): void {
@@ -51,6 +64,22 @@ export function useDriftSync({
           filter: `tournament_id=eq.${tournamentId}`,
         },
         () => {
+          onPlayers();
+        },
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "tournament_events",
+          filter: `tournament_id=eq.${tournamentId}`,
+        },
+        () => {
+          // Admin actions (bust, rebuy, addon, merge, balance, finalize)
+          // all write at least one event. Refetching on the event delivers
+          // the visible state change even when the matching row updates
+          // get batched or delayed by realtime.
           onPlayers();
         },
       )
