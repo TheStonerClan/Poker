@@ -25,6 +25,12 @@ alter table public.tournament_templates
 -- Cheap defensive check: either both NULL or both set. Catches typos
 -- like setting time without zone — the app would otherwise project a
 -- date-only entry and quietly drop the time the admin entered.
+--
+-- DROP-then-ADD is the idempotent pattern (`add constraint if not
+-- exists` doesn't exist in PG <17). Re-running this migration after
+-- a partial apply is now a no-op rather than a 42710 error.
+alter table public.tournament_templates
+  drop constraint if exists tournament_templates_start_time_zone_paired;
 alter table public.tournament_templates
   add constraint tournament_templates_start_time_zone_paired
   check (
@@ -33,6 +39,8 @@ alter table public.tournament_templates
   );
 
 -- HH:MM 24-hour. Belt-and-suspenders against bad client payloads.
+alter table public.tournament_templates
+  drop constraint if exists tournament_templates_start_time_format;
 alter table public.tournament_templates
   add constraint tournament_templates_start_time_format
   check (
