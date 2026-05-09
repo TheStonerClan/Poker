@@ -2,6 +2,7 @@ import { headers } from "next/headers";
 
 import TvAutoRefresh from "@/components/tv/TvAutoRefresh";
 import TvDisplay from "@/components/tv/TvDisplay";
+import TvPregame from "@/components/tv/TvPregame";
 import TvRecap from "@/components/tv/TvRecap";
 import { createServiceClient } from "@/lib/supabase/service";
 import type {
@@ -127,6 +128,26 @@ export default async function TvPage() {
   }
 
   const tournamentRow = tournament as TournamentRow;
+
+  // Pre-game view: when the tournament is `scheduled` (admin hasn't
+  // started the timer yet), show the table assignments instead of the
+  // live timer. The 30s auto-refresh inside <TvPregame> flips the screen
+  // to <TvDisplay> as soon as status -> running.
+  if (tournamentRow.status === "scheduled") {
+    const { data: pregamePlayers } = await supabase
+      .from("tournament_players")
+      .select("*, players(id, name)")
+      .eq("tournament_id", tournamentRow.id)
+      .order("table_number", { ascending: true, nullsFirst: false })
+      .order("seat_number", { ascending: true, nullsFirst: false });
+
+    return (
+      <TvPregame
+        tournament={tournamentRow}
+        players={(pregamePlayers ?? []) as unknown as TournamentPlayerWithName[]}
+      />
+    );
+  }
 
   const [{ data: players }, { data: events }] = await Promise.all([
     supabase

@@ -6,10 +6,13 @@ import { z } from "zod";
 
 import { requireAdmin } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
+import { randomizeAssignments } from "@/lib/admin/tables";
 
 const StartSchema = z.object({
   templateId: z.uuid(),
   playerIds: z.array(z.uuid()).min(2, "Pick at least two players."),
+  numTables: z.coerce.number().int().min(1).max(10),
+  maxSeatsPerTable: z.coerce.number().int().min(2).max(10),
 });
 
 export type StartTournamentResult = {
@@ -20,6 +23,8 @@ export type StartTournamentResult = {
 export async function startTournament(input: {
   templateId: string;
   playerIds: string[];
+  numTables: number;
+  maxSeatsPerTable: number;
 }): Promise<StartTournamentResult> {
   await requireAdmin();
   const parsed = StartSchema.safeParse(input);
@@ -30,7 +35,13 @@ export async function startTournament(input: {
     };
   }
 
-  const { templateId, playerIds } = parsed.data;
+  const { templateId, playerIds, numTables, maxSeatsPerTable } = parsed.data;
+  if (playerIds.length > numTables * maxSeatsPerTable) {
+    return {
+      status: "error",
+      message: `${playerIds.length} players don't fit in ${numTables} × ${maxSeatsPerTable} seats. Bump tables or seats.`,
+    };
+  }
   const supabase = await createClient();
 
   const { data: existing } = await supabase
@@ -82,6 +93,8 @@ export async function startTournament(input: {
       starting_stack_composition_snapshot: template.starting_stack_composition,
       blind_structure_snapshot: structure.levels,
       current_level: 1,
+      num_tables: numTables,
+      max_seats_per_table: maxSeatsPerTable,
     })
     .select("id")
     .single();
@@ -89,10 +102,18 @@ export async function startTournament(input: {
     return { status: "error", message: insErr?.message ?? "Could not create tournament" };
   }
 
-  const tpRows = playerIds.map((player_id, idx) => ({
+  // Randomize the roster onto (table, seat) before inserting. The randomize
+  // helper round-robins so table sizes stay balanced (ceil/floor of N/T).
+  const assignments = randomizeAssignments({
+    playerIds,
+    numTables,
+    maxSeatsPerTable,
+  });
+  const tpRows = assignments.map((a) => ({
     tournament_id: tournament.id,
-    player_id,
-    seat_number: idx + 1,
+    player_id: a.player_id,
+    table_number: a.table_number,
+    seat_number: a.seat_number,
     current_chips: template.starting_stack,
   }));
 

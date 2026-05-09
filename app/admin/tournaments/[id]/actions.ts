@@ -7,6 +7,7 @@ import { z } from "zod";
 import { requireAdmin } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { blindLevels } from "@/lib/admin/queries";
+import { randomizeAssignments } from "@/lib/admin/tables";
 import { computePayouts } from "prize-math";
 import type { TablesUpdate } from "@/lib/database.types";
 
@@ -684,4 +685,84 @@ export async function finalizeTournament(
   revalidatePath(`/admin/tournaments/${id}`);
   revalidatePath("/tv");
   redirect("/admin");
+}
+
+/**
+ * Re-shuffle the roster across the tournament's tables. Only valid while
+ * the tournament is in `scheduled` state (before the timer starts) — once
+ * the cards are dealt, players are committed to their seats.
+ *
+ * Returns the same `{ ok, error? }` shape as the other admin actions so
+ * the production error message survives Next 16's redaction.
+ */
+export async function randomizeTableAssignments(
+  tournamentId: string,
+): Promise<AdminActionResult> {
+  return runAdminAction(async () => {
+    await requireAdmin();
+    const id = IdSchema.parse(tournamentId);
+    const supabase = await createClient();
+
+    const { data: t, error: tErr } = await supabase
+      .from("tournaments")
+      .select("status, num_tables, max_seats_per_table")
+      .eq("id", id)
+      .maybeSingle();
+    if (tErr || !t) throw new Error(tErr?.message ?? "Tournament not found");
+    if (t.status !== "scheduled") {
+      throw new Error(
+        `Re-randomize is only available while the tournament is scheduled (currently ${t.status}).`,
+      );
+    }
+    const numTables = t.num_tables;
+    const maxSeats = t.max_seats_per_table;
+    if (numTables == null || maxSeats == null) {
+      throw new Error(
+        "This tournament was created before table management — open a new tournament to use it.",
+      );
+    }
+
+    const { data: roster } = await supabase
+      .from("tournament_players")
+      .select("id")
+      .eq("tournament_id", id);
+    const rows = roster ?? [];
+    if (rows.length === 0) {
+      throw new Error("No players to randomize.");
+    }
+
+    const assignments = randomizeAssignments({
+      playerIds: rows.map((r) => r.id),
+      numTables,
+      maxSeatsPerTable: maxSeats,
+    });
+
+    // Two-phase update: clear seats first, then assign. The unique index
+    // on (tournament_id, table_number, seat_number) would otherwise reject
+    // any update that swaps two players' seats. Clearing to NULL drops
+    // them out of the partial unique index entirely.
+    const { error: clearErr } = await supabase
+      .from("tournament_players")
+      .update({ table_number: null, seat_number: null })
+      .eq("tournament_id", id);
+    if (clearErr) throw new Error(clearErr.message);
+
+    // Apply new assignments one row at a time. With ~30 players this is
+    // cheap; the alternative (a Postgres CTE update) would need a custom
+    // RPC. The `player_id` field on each assignment is actually the
+    // tournament_player row id we shuffled in (the helper is id-agnostic),
+    // so we can update by it directly.
+    for (const a of assignments) {
+      const { error } = await supabase
+        .from("tournament_players")
+        .update({
+          table_number: a.table_number,
+          seat_number: a.seat_number,
+        })
+        .eq("id", a.player_id);
+      if (error) throw new Error(error.message);
+    }
+
+    await refresh(id);
+  });
 }
