@@ -1152,3 +1152,199 @@ export async function mergeTables(
     await refresh(id);
   });
 }
+
+// ─── Pre-game roster edits (status='scheduled' only) ────────────────────────
+
+const AddPlayersSchema = z.object({
+  tournamentId: z.uuid(),
+  playerIds: z.array(z.uuid()).min(1, "Pick at least one player to add."),
+});
+
+/**
+ * Stage additional players onto a scheduled (not-yet-started)
+ * tournament. Lets the admin add late-confirming RSVPs over the days
+ * leading up to a game without re-running the wizard from scratch.
+ *
+ * Smart-insert seating: each new player takes the lowest free seat at
+ * the table with the most remaining capacity. Existing players keep
+ * their (table, seat) — the admin can hit "Re-randomize" separately
+ * if they want a fresh shuffle.
+ *
+ * Idempotent on player_id: passing a player who's already rostered is
+ * silently skipped instead of erroring (so an "Add" UI that doesn't
+ * pre-filter the master list still works).
+ *
+ * Locked once the tournament starts. The detail page also hides the
+ * controls in that state, but the action enforces it server-side.
+ */
+export async function addPlayersToTournament(input: {
+  tournamentId: string;
+  playerIds: string[];
+}): Promise<AdminActionResult> {
+  return runAdminAction(async () => {
+    await requireAdmin();
+    const { tournamentId, playerIds } = AddPlayersSchema.parse(input);
+    const supabase = await createClient();
+
+    const { data: t, error: tErr } = await supabase
+      .from("tournaments")
+      .select(
+        "status, starting_stack_snapshot, num_tables, max_seats_per_table, tables_config",
+      )
+      .eq("id", tournamentId)
+      .maybeSingle();
+    if (tErr || !t) throw new Error(tErr?.message ?? "Tournament not found");
+    if (t.status !== "scheduled") {
+      throw new Error(
+        `Roster is locked once the tournament starts (currently ${t.status}).`,
+      );
+    }
+
+    const { data: existing, error: rosterErr } = await supabase
+      .from("tournament_players")
+      .select("player_id, table_number, seat_number")
+      .eq("tournament_id", tournamentId);
+    if (rosterErr) throw new Error(rosterErr.message);
+
+    const alreadyRostered = new Set(
+      (existing ?? []).map((r) => r.player_id).filter(Boolean) as string[],
+    );
+    const toAdd = playerIds.filter((id) => !alreadyRostered.has(id));
+    if (toAdd.length === 0) return; // nothing to do — caller asked for already-rostered players
+
+    const tables = resolveTablesConfig({
+      tablesConfig: t.tables_config,
+      numTables: t.num_tables,
+      maxSeatsPerTable: t.max_seats_per_table,
+    });
+
+    // Build per-table occupied-seat counts so we can keep picking
+    // "table with most remaining capacity" greedily without re-
+    // computing from the occupied set every iteration.
+    const filled = tables.map((cfg) => {
+      let n = 0;
+      for (const r of existing ?? []) {
+        if (r.table_number === tables.indexOf(cfg) + 1) n++;
+      }
+      return n;
+    });
+    const occupied = new Set<string>();
+    for (const r of existing ?? []) {
+      if (r.table_number != null && r.seat_number != null) {
+        occupied.add(`${r.table_number}:${r.seat_number}`);
+      }
+    }
+
+    const newRows: Array<{
+      tournament_id: string;
+      player_id: string;
+      current_chips: number;
+      table_number?: number | null;
+      seat_number?: number | null;
+    }> = [];
+    for (const pid of toAdd) {
+      // No tables configured (legacy tournament) — insert with NULL
+      // seat so the admin can re-seat manually. Doesn't error so the
+      // add still works.
+      if (tables.length === 0) {
+        newRows.push({
+          tournament_id: tournamentId,
+          player_id: pid,
+          current_chips: t.starting_stack_snapshot,
+        });
+        continue;
+      }
+
+      // Pick the table with the most remaining capacity. Ties break
+      // to the lowest-indexed table so the result is deterministic.
+      let bestIdx = -1;
+      let bestRemaining = -1;
+      for (let i = 0; i < tables.length; i++) {
+        const remaining = tables[i].max_seats - filled[i];
+        if (remaining > bestRemaining) {
+          bestIdx = i;
+          bestRemaining = remaining;
+        }
+      }
+      if (bestIdx < 0 || bestRemaining <= 0) {
+        throw new Error(
+          "All tables are full. Add a table or raise a seat cap before adding more players.",
+        );
+      }
+
+      const tableNumber = bestIdx + 1;
+      const cap = tables[bestIdx].max_seats;
+      let seat = 1;
+      while (seat <= cap && occupied.has(`${tableNumber}:${seat}`)) seat++;
+      if (seat > cap) {
+        // Shouldn't happen given the bestRemaining check above, but
+        // bail loudly rather than silently NULL the seat.
+        throw new Error(
+          `No free seat at ${tables[bestIdx].name} (cap ${cap}). Re-randomize and try again.`,
+        );
+      }
+      occupied.add(`${tableNumber}:${seat}`);
+      filled[bestIdx]++;
+      newRows.push({
+        tournament_id: tournamentId,
+        player_id: pid,
+        table_number: tableNumber,
+        seat_number: seat,
+        current_chips: t.starting_stack_snapshot,
+      });
+    }
+
+    const { error: insErr } = await supabase
+      .from("tournament_players")
+      .insert(newRows);
+    if (insErr) throw new Error(insErr.message);
+
+    await refresh(tournamentId);
+  });
+}
+
+const RemovePlayerSchema = z.object({
+  tournamentId: z.uuid(),
+  tournamentPlayerId: z.uuid(),
+});
+
+/**
+ * Remove a player from a scheduled (not-yet-started) tournament's
+ * staged roster. Their (table, seat) becomes free for the next added
+ * player; existing players keep their assignments.
+ *
+ * Locked once the tournament starts — at that point use the bust
+ * flow instead.
+ */
+export async function removePlayerFromTournament(input: {
+  tournamentId: string;
+  tournamentPlayerId: string;
+}): Promise<AdminActionResult> {
+  return runAdminAction(async () => {
+    await requireAdmin();
+    const { tournamentId, tournamentPlayerId } =
+      RemovePlayerSchema.parse(input);
+    const supabase = await createClient();
+
+    const { data: t, error: tErr } = await supabase
+      .from("tournaments")
+      .select("status")
+      .eq("id", tournamentId)
+      .maybeSingle();
+    if (tErr || !t) throw new Error(tErr?.message ?? "Tournament not found");
+    if (t.status !== "scheduled") {
+      throw new Error(
+        `Roster is locked once the tournament starts (currently ${t.status}). Use the bust flow instead.`,
+      );
+    }
+
+    const { error: delErr } = await supabase
+      .from("tournament_players")
+      .delete()
+      .eq("id", tournamentPlayerId)
+      .eq("tournament_id", tournamentId);
+    if (delErr) throw new Error(delErr.message);
+
+    await refresh(tournamentId);
+  });
+}
