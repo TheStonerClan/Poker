@@ -1,5 +1,6 @@
 import { headers } from "next/headers";
 
+import TvAutoRefresh from "@/components/tv/TvAutoRefresh";
 import TvDisplay from "@/components/tv/TvDisplay";
 import TvRecap from "@/components/tv/TvRecap";
 import { createServiceClient } from "@/lib/supabase/service";
@@ -21,13 +22,17 @@ export const dynamic = "force-dynamic";
 function WaitingScreen({ subtitle }: { subtitle?: string }) {
   return (
     <main className="min-h-screen flex flex-col items-center justify-center bg-bg text-fg">
+      {/* Reload every minute so the screen flips to the live display the
+          moment the admin starts a tournament — no need to refresh the
+          TV by hand at the start of poker night. */}
+      <TvAutoRefresh intervalSec={60} />
       <span className="text-label uppercase tracking-[0.4em] text-sm">
         Holdem Clock
       </span>
-      <h1 className="mt-4 font-mono text-fg text-5xl tabular-nums">
+      <h1 className="mt-4 font-mono text-fg text-[clamp(2rem,7vw,3.75rem)] tabular-nums">
         Waiting for tournament…
       </h1>
-      <p className="mt-6 text-fg/60 max-w-md text-center">
+      <p className="mt-6 text-fg/60 max-w-md text-center px-6">
         {subtitle ?? "The TV will pick up the next active tournament automatically."}
       </p>
     </main>
