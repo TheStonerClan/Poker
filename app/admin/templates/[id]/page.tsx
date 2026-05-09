@@ -12,6 +12,7 @@ import { BasicsTab } from "./_tabs/BasicsTab";
 import { BuybackTab } from "./_tabs/BuybackTab";
 import { BlindsTab } from "./_tabs/BlindsTab";
 import { PrizesTab } from "./_tabs/PrizesTab";
+import { ScheduleTab } from "./_tabs/ScheduleTab";
 
 export const dynamic = "force-dynamic";
 
@@ -20,6 +21,7 @@ const TABS = [
   { id: "buyback", label: "Buyback" },
   { id: "blinds", label: "Blinds" },
   { id: "prizes", label: "Prizes" },
+  { id: "schedule", label: "Schedule" },
 ] as const;
 
 type TabId = (typeof TABS)[number]["id"];
@@ -84,6 +86,7 @@ export default async function TemplateEditorPage({
           />
         ) : null}
         {active === "prizes" ? <PrizesTab template={template} /> : null}
+        {active === "schedule" ? <ScheduleTab template={template} /> : null}
       </main>
     </>
   );
