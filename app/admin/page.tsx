@@ -26,14 +26,19 @@ export default async function AdminDashboardPage() {
   // Always fetch upcoming — surfaced in BOTH the active and empty
   // dashboard states. While a tournament is running the admin still
   // wants to see / prep next week's; when nothing's running it's the
-  // primary call-to-action under "Start tournament".
+  // primary call-to-action under "Start tournament". `adminLinks`
+  // makes each row tappable: materialized scheduled tournaments link
+  // to /admin/tournaments/[id]; recurrence projections link to the
+  // template's Schedule tab.
   const supabase = await createClient();
-  const upcoming = await fetchUpcomingTournaments(supabase);
+  const upcoming = await fetchUpcomingTournaments(supabase, {
+    adminLinks: true,
+  });
   // When there's an active tournament, hide IT from the upcoming
   // list. The admin is already operating it from the page above; it
   // doesn't belong in the "upcoming" section.
   const upcomingFiltered = tournament
-    ? upcoming.filter((u) => u.id !== tournament.id)
+    ? upcoming.filter((u) => u.key !== `t:${tournament.id}`)
     : upcoming;
 
   if (!tournament) {
@@ -242,10 +247,14 @@ function EmptyDashboard({ upcoming }: { upcoming: UpcomingTournament[] }) {
 
 /**
  * Upcoming-tournaments list as it appears on /admin. Same data
- * source as the public landing page, but every row is clickable —
- * the link goes to /admin/tournaments/[id] where the admin can
- * edit settings, add players in advance, and start the event when
- * the room is ready.
+ * source as the public landing page, but every row is clickable.
+ *
+ * Materialized scheduled tournaments link to /admin/tournaments/[id]
+ * where the admin can edit settings, add players in advance, and
+ * start the event when the room is ready. Projected (recurrence)
+ * rows link to the template's Schedule tab so the admin can move /
+ * cancel that occurrence — they pre-date any roster, so there's no
+ * tournament page to land on yet.
  */
 function UpcomingAdminSection({
   upcoming,
@@ -267,43 +276,86 @@ function UpcomingAdminSection({
         </span>
       </div>
       <ul className="flex flex-col gap-2">
-        {upcoming.map((u) => (
-          <li key={u.id}>
-            <Link
-              href={`/admin/tournaments/${u.id}`}
-              className="flex flex-col gap-1 rounded-md border border-fg/10 px-3 py-2.5 hover:border-gold/40"
-            >
+        {upcoming.map((u) => {
+          const inner = (
+            <>
               <div className="flex items-baseline justify-between gap-2">
                 <p className="text-sm font-semibold text-fg">
                   {u.templateName}
+                  {u.kind === "projected" ? (
+                    <span className="ml-2 rounded-full border border-fg/20 px-1.5 py-px text-[9px] uppercase tracking-wider text-fg/55">
+                      Recurring
+                    </span>
+                  ) : null}
                 </p>
                 <p className="font-mono text-xs tabular-nums text-fg/70">
-                  {u.scheduled_at ? (
-                    <LocalDateTime
-                      iso={u.scheduled_at}
-                      options={{
-                        weekday: "short",
-                        month: "short",
-                        day: "numeric",
-                        hour: "numeric",
-                        minute: "2-digit",
-                      }}
-                    />
-                  ) : (
-                    <span className="uppercase tracking-widest text-[10px] text-fg/45">
-                      TBD
-                    </span>
-                  )}
+                  <UpcomingDate iso={u.iso} dateOnly={u.dateOnly} />
                 </p>
               </div>
               {u.location ? (
                 <p className="text-xs text-fg/55">{u.location}</p>
               ) : null}
-            </Link>
-          </li>
-        ))}
+            </>
+          );
+          // u.href is always present here because the caller asked for
+          // adminLinks, but type-narrow with a fallback so a future
+          // caller change doesn't crash the page.
+          return (
+            <li key={u.key}>
+              {u.href ? (
+                <Link
+                  href={u.href}
+                  className="flex flex-col gap-1 rounded-md border border-fg/10 px-3 py-2.5 hover:border-gold/40"
+                >
+                  {inner}
+                </Link>
+              ) : (
+                <div className="flex flex-col gap-1 rounded-md border border-fg/10 px-3 py-2.5">
+                  {inner}
+                </div>
+              )}
+            </li>
+          );
+        })}
       </ul>
     </section>
+  );
+}
+
+/**
+ * Shared date renderer — see the matching helper on the public
+ * landing page (app/page.tsx). Time-of-day is dropped for projected
+ * (recurrence-derived) rows since those only carry a calendar date.
+ */
+function UpcomingDate({
+  iso,
+  dateOnly,
+}: {
+  iso: string | null;
+  dateOnly: boolean;
+}) {
+  if (!iso) {
+    return (
+      <span className="uppercase tracking-widest text-[10px] text-fg/45">
+        TBD
+      </span>
+    );
+  }
+  return (
+    <LocalDateTime
+      iso={iso}
+      options={
+        dateOnly
+          ? { weekday: "short", month: "short", day: "numeric" }
+          : {
+              weekday: "short",
+              month: "short",
+              day: "numeric",
+              hour: "numeric",
+              minute: "2-digit",
+            }
+      }
+    />
   );
 }
 

@@ -154,7 +154,7 @@ function UpcomingSection({ upcoming }: { upcoming: UpcomingTournament[] }) {
       <ul className="flex flex-col gap-2">
         {upcoming.map((u) => (
           <li
-            key={u.id}
+            key={u.key}
             className="flex flex-col gap-1 rounded-lg border border-fg/10 px-4 py-3 sm:flex-row sm:items-baseline sm:justify-between"
           >
             <div>
@@ -164,26 +164,52 @@ function UpcomingSection({ upcoming }: { upcoming: UpcomingTournament[] }) {
               ) : null}
             </div>
             <p className="font-mono text-xs tabular-nums text-fg/70">
-              {u.scheduled_at ? (
-                <LocalDateTime
-                  iso={u.scheduled_at}
-                  options={{
-                    weekday: "short",
-                    month: "short",
-                    day: "numeric",
-                    hour: "numeric",
-                    minute: "2-digit",
-                  }}
-                />
-              ) : (
-                <span className="uppercase tracking-widest text-[10px] text-fg/45">
-                  TBD
-                </span>
-              )}
+              <UpcomingDate iso={u.iso} dateOnly={u.dateOnly} />
             </p>
           </li>
         ))}
       </ul>
     </section>
+  );
+}
+
+/**
+ * Date renderer shared between materialized and projected rows.
+ *
+ * Materialized rows (`dateOnly: false`) carry a precise timestamp —
+ * format with the local time-of-day so guests can see "Fri, May 15
+ * at 7:00 PM". Projected rows (`dateOnly: true`) come from a
+ * recurrence rule and only have a calendar date — drop the time so
+ * we don't render a misleading "12:00 AM" for them.
+ */
+function UpcomingDate({
+  iso,
+  dateOnly,
+}: {
+  iso: string | null;
+  dateOnly: boolean;
+}) {
+  if (!iso) {
+    return (
+      <span className="uppercase tracking-widest text-[10px] text-fg/45">
+        TBD
+      </span>
+    );
+  }
+  return (
+    <LocalDateTime
+      iso={iso}
+      options={
+        dateOnly
+          ? { weekday: "short", month: "short", day: "numeric" }
+          : {
+              weekday: "short",
+              month: "short",
+              day: "numeric",
+              hour: "numeric",
+              minute: "2-digit",
+            }
+      }
+    />
   );
 }
