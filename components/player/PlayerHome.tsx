@@ -89,6 +89,9 @@ export function PlayerHome(props: PlayerHomeProps) {
             playerId={player.playerId}
             chipDenominations={props.colorUp.chipDenominations}
             currentColorUp={props.colorUp.currentColorUp}
+            isBreak={props.stats.isBreak}
+            currentLevelNum={props.stats.currentLevelNum}
+            currentChips={player.currentChips}
           />
         )}
         {tab === "bust" && showAdminLockedTabs && (
