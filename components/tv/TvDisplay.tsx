@@ -1,7 +1,7 @@
 "use client";
 
 import { QRCodeSVG } from "qrcode.react";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import BlindLevel from "@/components/tv/BlindLevel";
 import BottomBanner from "@/components/tv/BottomBanner";
@@ -59,6 +59,21 @@ export default function TvDisplay({
   const onTournament = useCallback((row: Record<string, unknown>) => {
     setTournament((prev) => ({ ...prev, ...(row as TournamentRow) }));
   }, []);
+
+  // When the tournament finalizes, reload the page so /tv re-evaluates
+  // server-side and switches to <TvRecap>. TvDisplay itself only renders
+  // the live view, so without a reload the screen would stay on the old
+  // timer with stale state until the operator hit refresh manually.
+  // Small delay gives the DB write a moment to propagate so the recap
+  // query has a chance to find the just-finished row.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (tournament.status !== "finished") return;
+    const t = window.setTimeout(() => {
+      window.location.reload();
+    }, 1500);
+    return () => window.clearTimeout(t);
+  }, [tournament.status]);
 
   const onPlayers = useCallback(async () => {
     try {
