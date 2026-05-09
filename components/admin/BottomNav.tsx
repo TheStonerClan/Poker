@@ -30,9 +30,13 @@ const ITEMS: NavItem[] = [
     icon: <Icon path="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4m0 2c-3.3 0-8 1.6-8 5v3h16v-3c0-3.4-4.7-5-8-5" />,
   },
   {
-    href: "/admin/history",
+    // Historics is a public page — anyone can land on it. The admin
+    // bottom nav links straight to /history (canonical) so the bar
+    // stays consistent across logged-in / logged-out states; the
+    // /admin/history path now redirects there.
+    href: "/history",
     label: "History",
-    match: (p) => p.startsWith("/admin/history"),
+    match: (p) => p.startsWith("/history") || p.startsWith("/admin/history"),
     icon: <Icon path="M13 3a9 9 0 1 0 9 9h-2a7 7 0 1 1-7-7v3l4-4-4-4zm-1 5v6l5 3 1-1.7-4-2.3V8z" />,
   },
   {

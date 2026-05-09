@@ -21,6 +21,24 @@ export type FinishedTournament = {
   started_at: string | null;
   buy_in_snapshot: number;
   current_level: number;
+  /**
+   * Per-token prices captured at finalize. Used by the cost-basis math
+   * on the leaderboard ("net" payout = gross - sum of buy-in + each
+   * rebuy + each add-on the player bought into across the window).
+   * Optional because old tournaments predate the snapshots.
+   */
+  rebuy_price_snapshot?: number | null;
+  /**
+   * Buyback config snapshot. We mostly care about `addOnPrice` here so
+   * we can charge the player for each add-on they took in the cost-
+   * basis math. Older shapes use `price` for both rebuy + addon, hence
+   * the type union.
+   */
+  buyback_config_snapshot?: {
+    price?: number;
+    addOnPrice?: number;
+    rebuyPrice?: number;
+  } | null;
 };
 
 export type RosterRow = {
@@ -269,4 +287,512 @@ function groupBy<T, K>(items: T[], key: (item: T) => K): Map<K, T[]> {
     }
   }
   return out;
+}
+
+// ─── Time-range filter ──────────────────────────────────────────────────────
+
+/**
+ * Filter window the historics page surfaces as filter pills. Three of
+ * the four are tournament-count windows ("last 1, 3, 6 finished
+ * tournaments"); the fourth is a calendar 12-month window so admins
+ * can see seasonal trends without having to count tournaments.
+ *
+ * "Prior year" intentionally means "trailing 12 months from today",
+ * not "the calendar year just past" — that's the more useful signal
+ * for an actively-running league. The helper text in the UI says
+ * "past 12 months" so there's no ambiguity for anyone reading.
+ */
+export type HistoryRange = "last1" | "last3" | "last6" | "year12" | "all";
+
+export const HISTORY_RANGES: readonly HistoryRange[] = [
+  "last1",
+  "last3",
+  "last6",
+  "year12",
+  "all",
+] as const;
+
+export function isHistoryRange(v: unknown): v is HistoryRange {
+  return (
+    typeof v === "string" && (HISTORY_RANGES as readonly string[]).includes(v)
+  );
+}
+
+export function rangeLabel(r: HistoryRange): string {
+  switch (r) {
+    case "last1":
+      return "Last game";
+    case "last3":
+      return "Last 3 games";
+    case "last6":
+      return "Last 6 games";
+    case "year12":
+      return "Past 12 months";
+    case "all":
+      return "All time";
+  }
+}
+
+/**
+ * Filter `tournaments` (which the caller has already sorted DESC by
+ * finished_at) down to the chosen range. Tournament-count windows
+ * just slice the head; the 12-month window keeps anything with a
+ * finished_at within the past year.
+ *
+ * Caller still owns the cap on the upstream query — pass at least
+ * 12 for "year12" to behave correctly when 12+ months of activity
+ * exists. We don't bound it here.
+ */
+export function applyHistoryRange(
+  tournaments: FinishedTournament[],
+  range: HistoryRange,
+  nowMs: number = Date.now(),
+): FinishedTournament[] {
+  switch (range) {
+    case "last1":
+      return tournaments.slice(0, 1);
+    case "last3":
+      return tournaments.slice(0, 3);
+    case "last6":
+      return tournaments.slice(0, 6);
+    case "year12": {
+      const cutoff = nowMs - 365 * 24 * 60 * 60 * 1000;
+      return tournaments.filter((t) => {
+        if (!t.finished_at) return false;
+        const ms = Date.parse(t.finished_at);
+        return Number.isFinite(ms) && ms >= cutoff;
+      });
+    }
+    case "all":
+      return tournaments;
+  }
+}
+
+// ─── Per-player granular stats ──────────────────────────────────────────────
+
+/** A `rebuy` or `addon` event (same shape — both carry at_level + player_id). */
+export type TokenEvent = {
+  tournament_id: string;
+  payload: Record<string, unknown> | null;
+  created_at: string;
+};
+
+function readPlayerId(payload: Record<string, unknown> | null): string | null {
+  const v = payload?.player_id;
+  return typeof v === "string" ? v : null;
+}
+
+function readAtLevel(payload: Record<string, unknown> | null): number | null {
+  const v = payload?.at_level;
+  return typeof v === "number" ? v : null;
+}
+
+function tournamentCostBasis(
+  tournament: FinishedTournament,
+): { rebuyPrice: number; addOnPrice: number } {
+  const cfg = tournament.buyback_config_snapshot ?? null;
+  const rebuyPrice =
+    (typeof cfg?.rebuyPrice === "number" ? cfg.rebuyPrice : null) ??
+    (typeof cfg?.price === "number" ? cfg.price : null) ??
+    tournament.rebuy_price_snapshot ??
+    tournament.buy_in_snapshot;
+  const addOnPrice =
+    (typeof cfg?.addOnPrice === "number" ? cfg.addOnPrice : null) ??
+    (typeof cfg?.price === "number" ? cfg.price : null) ??
+    tournament.rebuy_price_snapshot ??
+    tournament.buy_in_snapshot;
+  return { rebuyPrice, addOnPrice };
+}
+
+export type PlayerStatsRow = {
+  playerId: string;
+  name: string;
+  /** Tournaments the player entered in the window. */
+  tournamentsPlayed: number;
+  /** Tournaments where finishing_position === 1. */
+  wins: number;
+  /** Tournaments where they took home a non-zero payout (in-the-money). */
+  itmCount: number;
+  /** Sum of payouts from prize_distributions (gross). */
+  grossWinnings: number;
+  /**
+   * Total cost basis: sum across played tournaments of buy_in plus
+   * rebuy_price × rebuys plus addOn_price × addons. The "net" leaderboard
+   * sorts by `grossWinnings - costBasis`, so a player who never rebuys
+   * but always cashes runs above someone who rebuys repeatedly to chase.
+   */
+  costBasis: number;
+  /** grossWinnings − costBasis. Can be (and often is) negative. */
+  net: number;
+  /**
+   * Average level at which the player busted out across tournaments
+   * where they have a recorded busted_at_level. `null` when they never
+   * busted in the window (e.g. they won or chopped every tournament).
+   */
+  avgBustLevel: number | null;
+  /**
+   * Average level at which the player rebought across `rebuy` events.
+   * `null` when they have zero rebuys in the window.
+   */
+  avgRebuyLevel: number | null;
+  /** Total rebuys across the window. */
+  totalRebuys: number;
+  /** Total add-ons across the window. */
+  totalAddOns: number;
+  /**
+   * Fraction of played tournaments where they rebought at least once.
+   * 0..1. Surfaces "always rebuys" vs "never rebuys" cohorts.
+   */
+  rebuyRate: number;
+  /** Average finishing position (lower is better). `null` if no recorded position. */
+  avgFinish: number | null;
+};
+
+export function buildPlayerStats(args: {
+  tournaments: FinishedTournament[];
+  roster: RosterRow[];
+  payouts: PayoutRow[];
+  rebuyEvents: TokenEvent[];
+  addOnEvents: TokenEvent[];
+}): PlayerStatsRow[] {
+  const { tournaments, roster, payouts, rebuyEvents, addOnEvents } = args;
+
+  const tournamentById = new Map(tournaments.map((t) => [t.id, t]));
+  const tournamentIds = new Set(tournamentById.keys());
+
+  // Drop roster rows / events that fall outside the window — the caller
+  // pre-filters tournaments by range, but the upstream query may have
+  // pulled events for tournaments we've now sliced out.
+  const rosterInWindow = roster.filter((r) => tournamentIds.has(r.tournament_id));
+  const payoutsInWindow = payouts.filter((p) =>
+    tournamentIds.has(p.tournament_id),
+  );
+  const rebuysInWindow = rebuyEvents.filter((e) =>
+    tournamentIds.has(e.tournament_id),
+  );
+  const addOnsInWindow = addOnEvents.filter((e) =>
+    tournamentIds.has(e.tournament_id),
+  );
+
+  type Acc = {
+    name: string;
+    tournamentsPlayed: Set<string>;
+    tournamentsWithRebuy: Set<string>;
+    wins: number;
+    itmTournaments: Set<string>;
+    grossWinnings: number;
+    costBasis: number;
+    bustLevels: number[];
+    rebuyLevels: number[];
+    totalRebuys: number;
+    totalAddOns: number;
+    finishingPositions: number[];
+  };
+  const byPlayer = new Map<string, Acc>();
+  const ensure = (id: string, name: string): Acc => {
+    let acc = byPlayer.get(id);
+    if (!acc) {
+      acc = {
+        name,
+        tournamentsPlayed: new Set(),
+        tournamentsWithRebuy: new Set(),
+        wins: 0,
+        itmTournaments: new Set(),
+        grossWinnings: 0,
+        costBasis: 0,
+        bustLevels: [],
+        rebuyLevels: [],
+        totalRebuys: 0,
+        totalAddOns: 0,
+        finishingPositions: [],
+      };
+      byPlayer.set(id, acc);
+    }
+    return acc;
+  };
+
+  for (const r of rosterInWindow) {
+    if (!r.player_id || !r.player) continue;
+    const tournament = tournamentById.get(r.tournament_id);
+    if (!tournament) continue;
+    const acc = ensure(r.player_id, r.player.name);
+    acc.tournamentsPlayed.add(r.tournament_id);
+    if (r.finishing_position === 1) acc.wins += 1;
+    if (r.finishing_position != null) {
+      acc.finishingPositions.push(r.finishing_position);
+    }
+    if (r.busted_at_level != null) {
+      acc.bustLevels.push(r.busted_at_level);
+    }
+    // Cost basis: one buy-in + token-priced rebuys + token-priced
+    // add-ons. We use the per-row counters (0003) and fall back to the
+    // legacy boolean via tokenCounts() so an unmigrated DB still works.
+    const counts = tokenCounts(r);
+    const basis = tournamentCostBasis(tournament);
+    acc.costBasis +=
+      tournament.buy_in_snapshot +
+      counts.rebuys * basis.rebuyPrice +
+      counts.addOns * basis.addOnPrice;
+    acc.totalRebuys += counts.rebuys;
+    acc.totalAddOns += counts.addOns;
+    if (counts.rebuys > 0) acc.tournamentsWithRebuy.add(r.tournament_id);
+  }
+
+  for (const p of payoutsInWindow) {
+    if (!p.player_id || p.amount <= 0) continue;
+    const acc = byPlayer.get(p.player_id);
+    if (!acc) continue;
+    acc.grossWinnings += p.amount;
+    acc.itmTournaments.add(p.tournament_id);
+  }
+
+  // Rebuy events tell us *when* (level), the roster row tells us *how
+  // many*. We use the events for per-level averaging because the row
+  // counter is just the count.
+  for (const e of rebuysInWindow) {
+    const pid = readPlayerId(e.payload);
+    const lvl = readAtLevel(e.payload);
+    if (!pid || lvl == null) continue;
+    const acc = byPlayer.get(pid);
+    if (!acc) continue;
+    acc.rebuyLevels.push(lvl);
+  }
+
+  // Add-on event levels could be tracked the same way, but currently the
+  // UI only surfaces the *count* of add-ons (the level they were taken
+  // is much less informative — add-ons usually only happen at one
+  // configured break level). Keep the loop variable for future use.
+  void addOnsInWindow;
+
+  const rows: PlayerStatsRow[] = [];
+  for (const [playerId, acc] of byPlayer.entries()) {
+    const tournamentsPlayed = acc.tournamentsPlayed.size;
+    const rebuyRate =
+      tournamentsPlayed > 0
+        ? acc.tournamentsWithRebuy.size / tournamentsPlayed
+        : 0;
+    const avgBustLevel =
+      acc.bustLevels.length > 0
+        ? acc.bustLevels.reduce((s, n) => s + n, 0) / acc.bustLevels.length
+        : null;
+    const avgRebuyLevel =
+      acc.rebuyLevels.length > 0
+        ? acc.rebuyLevels.reduce((s, n) => s + n, 0) / acc.rebuyLevels.length
+        : null;
+    const avgFinish =
+      acc.finishingPositions.length > 0
+        ? acc.finishingPositions.reduce((s, n) => s + n, 0) /
+          acc.finishingPositions.length
+        : null;
+    rows.push({
+      playerId,
+      name: acc.name,
+      tournamentsPlayed,
+      wins: acc.wins,
+      itmCount: acc.itmTournaments.size,
+      grossWinnings: acc.grossWinnings,
+      costBasis: acc.costBasis,
+      net: acc.grossWinnings - acc.costBasis,
+      avgBustLevel,
+      avgRebuyLevel,
+      totalRebuys: acc.totalRebuys,
+      totalAddOns: acc.totalAddOns,
+      rebuyRate,
+      avgFinish,
+    });
+  }
+
+  // Default sort: net winnings DESC, then wins, then payout. The UI
+  // can re-sort by other columns.
+  rows.sort((a, b) => {
+    if (b.net !== a.net) return b.net - a.net;
+    if (b.wins !== a.wins) return b.wins - a.wins;
+    return b.grossWinnings - a.grossWinnings;
+  });
+
+  return rows;
+}
+
+// ─── Break-shift analysis ───────────────────────────────────────────────────
+
+/**
+ * Per-player chip count reported during a break (or anytime the player
+ * submitted via /play). The historics page uses these to compute who
+ * runs above/below the table average and who has the biggest swings.
+ */
+export type ChipSnapshotEvent = {
+  tournament_id: string;
+  payload: Record<string, unknown> | null;
+  created_at: string;
+};
+
+type Snapshot = {
+  tournamentId: string;
+  playerId: string;
+  level: number;
+  chips: number;
+  /** Order events were recorded — used to break ties at same level. */
+  ts: number;
+};
+
+function readSnapshots(events: ChipSnapshotEvent[]): Snapshot[] {
+  const out: Snapshot[] = [];
+  for (const e of events) {
+    const pid = readPlayerId(e.payload);
+    const lvl = e.payload?.level_num;
+    const chips = e.payload?.chips;
+    if (
+      !pid ||
+      typeof lvl !== "number" ||
+      typeof chips !== "number" ||
+      !Number.isFinite(chips)
+    ) {
+      continue;
+    }
+    out.push({
+      tournamentId: e.tournament_id,
+      playerId: pid,
+      level: lvl,
+      chips,
+      ts: Date.parse(e.created_at) || 0,
+    });
+  }
+  return out;
+}
+
+export type BreakShiftRow = {
+  playerId: string;
+  name: string;
+  /** Number of (tournament, level) snapshot points contributing. */
+  snapshotCount: number;
+  /**
+   * Average ratio of (player chips at break) / (mean chips at the same
+   * break in that tournament). 1.0 == on-average. >1 == consistently
+   * above the average, <1 == below. Computed across every snapshot
+   * the player has in the window.
+   */
+  avgChipsRatio: number;
+  /**
+   * Largest single between-break swing in chips for this player.
+   * Computed as max |chips_after - chips_before| for any consecutive
+   * pair of their snapshots in the SAME tournament.
+   */
+  biggestSwing: number;
+  /**
+   * Average between-break swing magnitude relative to the mean chip
+   * count of all snapshots at those break points. Lets us compare
+   * "this player swings ±15% per break" vs "this one swings ±60%".
+   * `null` when the player has fewer than 2 snapshots in any
+   * tournament.
+   */
+  avgSwingRatio: number | null;
+};
+
+export function buildBreakShiftStats(args: {
+  tournaments: FinishedTournament[];
+  roster: RosterRow[];
+  events: ChipSnapshotEvent[];
+}): BreakShiftRow[] {
+  const tournamentIds = new Set(args.tournaments.map((t) => t.id));
+  const inWindow = args.events.filter((e) => tournamentIds.has(e.tournament_id));
+  const snapshots = readSnapshots(inWindow);
+  if (snapshots.length === 0) return [];
+
+  // Map player_id -> name. Roster is the cheapest source.
+  const nameByPlayer = new Map<string, string>();
+  for (const r of args.roster) {
+    if (r.player_id && r.player?.name) nameByPlayer.set(r.player_id, r.player.name);
+  }
+
+  // For each (tournament, level) compute the mean of all reported chip
+  // counts. Snapshots without enough peers (a single reporter at that
+  // level) still count — their ratio is just 1.0 since the mean equals
+  // their value, and they don't skew anyone's number.
+  const meansByTournamentLevel = new Map<string, number>();
+  {
+    const grouped = new Map<string, number[]>();
+    for (const s of snapshots) {
+      const k = `${s.tournamentId}:${s.level}`;
+      const arr = grouped.get(k);
+      if (arr) arr.push(s.chips);
+      else grouped.set(k, [s.chips]);
+    }
+    for (const [k, arr] of grouped.entries()) {
+      const sum = arr.reduce((a, b) => a + b, 0);
+      meansByTournamentLevel.set(k, sum / arr.length);
+    }
+  }
+
+  // Group by player; within each player, group by tournament; sort by
+  // level so we can compute consecutive-break swings.
+  const byPlayer = new Map<
+    string,
+    Map<string, Snapshot[]>
+  >();
+  for (const s of snapshots) {
+    let perTournament = byPlayer.get(s.playerId);
+    if (!perTournament) {
+      perTournament = new Map();
+      byPlayer.set(s.playerId, perTournament);
+    }
+    const arr = perTournament.get(s.tournamentId);
+    if (arr) arr.push(s);
+    else perTournament.set(s.tournamentId, [s]);
+  }
+
+  const rows: BreakShiftRow[] = [];
+  for (const [playerId, perTournament] of byPlayer.entries()) {
+    let ratioSum = 0;
+    let ratioCount = 0;
+    let biggestSwing = 0;
+    let swingRatioSum = 0;
+    let swingRatioCount = 0;
+
+    for (const arr of perTournament.values()) {
+      // Sort by level, then by timestamp so duplicates at the same
+      // level (a player who reported twice at one break) stay ordered.
+      arr.sort((a, b) => a.level - b.level || a.ts - b.ts);
+      for (let i = 0; i < arr.length; i++) {
+        const s = arr[i];
+        const mean =
+          meansByTournamentLevel.get(`${s.tournamentId}:${s.level}`) ?? s.chips;
+        if (mean > 0) {
+          ratioSum += s.chips / mean;
+          ratioCount += 1;
+        }
+        if (i > 0) {
+          const prev = arr[i - 1];
+          const swing = Math.abs(s.chips - prev.chips);
+          if (swing > biggestSwing) biggestSwing = swing;
+          // Relative-to-mean: average the means of the two adjacent
+          // break points so a swing during a tight break (low mean)
+          // doesn't read identically to one during a chip-rich late
+          // break.
+          const prevMean =
+            meansByTournamentLevel.get(`${prev.tournamentId}:${prev.level}`) ??
+            prev.chips;
+          const baseline = (mean + prevMean) / 2;
+          if (baseline > 0) {
+            swingRatioSum += swing / baseline;
+            swingRatioCount += 1;
+          }
+        }
+      }
+    }
+
+    rows.push({
+      playerId,
+      name: nameByPlayer.get(playerId) ?? "—",
+      snapshotCount: ratioCount,
+      avgChipsRatio: ratioCount > 0 ? ratioSum / ratioCount : 1,
+      biggestSwing,
+      avgSwingRatio:
+        swingRatioCount > 0 ? swingRatioSum / swingRatioCount : null,
+    });
+  }
+
+  // Default sort: most data points first so single-snapshot players
+  // don't swamp the top of the list.
+  rows.sort((a, b) => b.snapshotCount - a.snapshotCount);
+  return rows;
 }
