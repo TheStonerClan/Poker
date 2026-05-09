@@ -1,16 +1,17 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
 /**
- * Error boundary for the /play tree. Replaces the generic Next 16
- * "page can't load" surface with something that tells the player what
- * to try and gives the admin a way to read the actual error.
+ * Error boundary for the /play tree.
  *
- * Errors thrown during a server-component render of the player view
- * land here. Production builds redact the message inside `error.message`
- * (Next 16 default) but `error.digest` is preserved — that's what the
- * admin can grep for in Vercel logs to find the underlying stack.
+ * Surfaces enough detail on screen that the admin can read off the
+ * actual error from the player's phone — Next 16 redacts SERVER error
+ * messages in production but client-side `error.message` survives, and
+ * even server errors carry a `digest` we can grep against Vercel logs.
+ *
+ * The collapsible "details" payload is plain text the player can
+ * screenshot or copy + paste into a message.
  */
 export default function PlayErrorBoundary({
   error,
@@ -19,13 +20,20 @@ export default function PlayErrorBoundary({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  const [showDetails, setShowDetails] = useState(false);
+
   useEffect(() => {
-    // Surface the error in the browser console so the admin can copy it
-    // out without digging through Vercel logs (digest is the searchable
-    // ID for prod tracebacks).
+    // Always log to the browser console — invisible on iOS without a
+    // dev console, but valuable when somebody DOES debug from a Mac.
     // eslint-disable-next-line no-console
     console.error("/play error boundary caught:", error);
   }, [error]);
+
+  const stackHead = (error.stack ?? "")
+    .split("\n")
+    .slice(0, 4)
+    .join("\n")
+    .trim();
 
   return (
     <main className="flex min-h-screen flex-col items-center justify-center gap-4 px-6 py-10 text-center">
@@ -36,14 +44,11 @@ export default function PlayErrorBoundary({
         Couldn&rsquo;t load the player view
       </h1>
       <p className="max-w-md text-sm text-fg/70">
-        Something went wrong rendering this page. Try the button below — if
-        it keeps failing, ask the admin to check the tournament setup.
+        Something went wrong rendering this page. Tap &ldquo;Try again.&rdquo;
+        If it keeps failing, tap &ldquo;Show details&rdquo; and send the text
+        to the admin.
       </p>
-      {error.digest ? (
-        <p className="font-mono text-[10px] text-fg/40">
-          ref: {error.digest}
-        </p>
-      ) : null}
+
       <button
         type="button"
         onClick={reset}
@@ -51,6 +56,30 @@ export default function PlayErrorBoundary({
       >
         Try again
       </button>
+
+      <button
+        type="button"
+        onClick={() => setShowDetails((v) => !v)}
+        className="text-xs text-fg/50 underline-offset-4 hover:underline"
+      >
+        {showDetails ? "Hide details" : "Show details"}
+      </button>
+
+      {showDetails ? (
+        <pre
+          className="mt-2 max-w-full overflow-auto rounded-md border border-fg/15 bg-fg/[0.03] p-3 text-left text-[11px] leading-snug text-fg/80"
+          style={{ fontFamily: "ui-monospace, monospace" }}
+        >
+          {[
+            error.name ? `name:    ${error.name}` : null,
+            error.message ? `message: ${error.message}` : null,
+            error.digest ? `digest:  ${error.digest}` : null,
+            stackHead ? `\n${stackHead}` : null,
+          ]
+            .filter(Boolean)
+            .join("\n")}
+        </pre>
+      ) : null}
     </main>
   );
 }

@@ -5,7 +5,7 @@ import { levelAt, parseBlindLevels } from "@/lib/player/blind-helpers";
 import type { PrizeConfig } from "prize-math";
 import { computePayouts } from "prize-math";
 import { slugifyPlayerName } from "@/lib/player/slug";
-import { createClient } from "@/lib/supabase/server";
+import { createServiceClient } from "@/lib/supabase/service";
 
 export const dynamic = "force-dynamic";
 
@@ -15,7 +15,12 @@ type Props = {
 
 export default async function PlayerHomePage({ params }: Props) {
   const { sessionId, playerSlug } = await params;
-  const supabase = await createClient();
+  // Service-role read for the same reason as the picker page: any phone
+  // that scanned the QR can land here, and they don't need to be an
+  // admin to see their own slot. Without service role the `players(name)`
+  // join is blocked by RLS for anonymous visitors and `me` ends up
+  // undefined → redirect-loop back to the picker.
+  const supabase = createServiceClient();
 
   const { data: tournament, error: tErr } = await supabase
     .from("tournaments")
