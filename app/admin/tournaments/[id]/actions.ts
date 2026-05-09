@@ -7,7 +7,12 @@ import { z } from "zod";
 import { requireAdmin } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { blindLevels } from "@/lib/admin/queries";
-import { randomizeAssignments, resolveTablesConfig } from "@/lib/admin/tables";
+import {
+  computeBalanceMoves,
+  computeMergeMoves,
+  randomizeAssignments,
+  resolveTablesConfig,
+} from "@/lib/admin/tables";
 import { computePayouts } from "prize-math";
 import type { TablesUpdate } from "@/lib/database.types";
 
@@ -765,6 +770,167 @@ export async function randomizeTableAssignments(
         .eq("id", a.player_id);
       if (error) throw new Error(error.message);
     }
+
+    await refresh(id);
+  });
+}
+
+/**
+ * Redistribute active players across the existing tables so the spread
+ * (busiest minus quietest) is ≤ 1. Touches only active players —
+ * busted-out rows keep their historical (table, seat) for the record.
+ *
+ * Only valid during play (running / paused). Returns an error result if
+ * tables are already balanced or there's only one table.
+ */
+export async function balanceTables(
+  tournamentId: string,
+): Promise<AdminActionResult> {
+  return runAdminAction(async () => {
+    await requireAdmin();
+    const id = IdSchema.parse(tournamentId);
+    const supabase = await createClient();
+
+    const { data: t, error: tErr } = await supabase
+      .from("tournaments")
+      .select("status, num_tables, max_seats_per_table, tables_config")
+      .eq("id", id)
+      .maybeSingle();
+    if (tErr || !t) throw new Error(tErr?.message ?? "Tournament not found");
+    if (t.status !== "running" && t.status !== "paused") {
+      throw new Error(
+        `Balance is only available during play (currently ${t.status}).`,
+      );
+    }
+
+    const tables = resolveTablesConfig({
+      tablesConfig: t.tables_config,
+      numTables: t.num_tables,
+      maxSeatsPerTable: t.max_seats_per_table,
+    });
+    if (tables.length <= 1) {
+      throw new Error("Only one table — nothing to balance.");
+    }
+
+    const { data: rows } = await supabase
+      .from("tournament_players")
+      .select("id, table_number, seat_number, busted_at_time")
+      .eq("tournament_id", id);
+
+    const moves = computeBalanceMoves({
+      rows: rows ?? [],
+      tablesConfig: tables,
+    });
+    if (moves.length === 0) {
+      throw new Error("Tables are already balanced.");
+    }
+
+    // Each move targets an unused (table, seat) per the helper's invariant
+    // (it tracks the occupied set as it generates moves). So a sequence of
+    // single-row updates can't violate the partial unique index.
+    for (const m of moves) {
+      const { error } = await supabase
+        .from("tournament_players")
+        .update({
+          table_number: m.table_number,
+          seat_number: m.seat_number,
+        })
+        .eq("id", m.id);
+      if (error) throw new Error(error.message);
+    }
+
+    await refresh(id);
+  });
+}
+
+/**
+ * Consolidate every active player onto the largest-capacity table.
+ * Active players already at the target keep their seats; everyone else
+ * gets a randomized seat among the remaining unused chairs at the
+ * target. Busted players keep their original (table, seat) for the
+ * record — they're not playing anymore and their stats stay attached
+ * to the table they busted at.
+ *
+ * Only valid when active count fits at the largest configured table
+ * (otherwise the merge would overflow). Trigger this from the admin UI
+ * once the field is small enough.
+ */
+export async function mergeTables(
+  tournamentId: string,
+): Promise<AdminActionResult> {
+  return runAdminAction(async () => {
+    await requireAdmin();
+    const id = IdSchema.parse(tournamentId);
+    const supabase = await createClient();
+
+    const { data: t, error: tErr } = await supabase
+      .from("tournaments")
+      .select("status, num_tables, max_seats_per_table, tables_config")
+      .eq("id", id)
+      .maybeSingle();
+    if (tErr || !t) throw new Error(tErr?.message ?? "Tournament not found");
+    if (t.status !== "running" && t.status !== "paused") {
+      throw new Error(
+        `Merge is only available during play (currently ${t.status}).`,
+      );
+    }
+
+    const tables = resolveTablesConfig({
+      tablesConfig: t.tables_config,
+      numTables: t.num_tables,
+      maxSeatsPerTable: t.max_seats_per_table,
+    });
+
+    const { data: rows } = await supabase
+      .from("tournament_players")
+      .select("id, table_number, seat_number, busted_at_time")
+      .eq("tournament_id", id);
+
+    const plan = computeMergeMoves({
+      rows: rows ?? [],
+      tablesConfig: tables,
+    });
+    if (plan.kind === "blocked") {
+      throw new Error(plan.reason);
+    }
+
+    // Two-phase: clear destination-conflicting seats first. Movers'
+    // target seats might collide with the seats of OTHER movers mid-
+    // update if we just write one at a time (e.g. mover A goes to
+    // seat 1 of target table while mover B leaves seat 1 of source —
+    // fine — but if any mover's target seat happens to match a
+    // current seat at that same target table for a different mover,
+    // we'd conflict). Cheapest-correct approach: null out every
+    // mover's current (table, seat) up front, then assign.
+    const moverIds = new Set(plan.moves.map((m) => m.id));
+    if (moverIds.size > 0) {
+      const { error: clearErr } = await supabase
+        .from("tournament_players")
+        .update({ table_number: null, seat_number: null })
+        .in("id", Array.from(moverIds));
+      if (clearErr) throw new Error(clearErr.message);
+    }
+
+    for (const m of plan.moves) {
+      const { error } = await supabase
+        .from("tournament_players")
+        .update({
+          table_number: m.table_number,
+          seat_number: m.seat_number,
+        })
+        .eq("id", m.id);
+      if (error) throw new Error(error.message);
+    }
+
+    await supabase.from("tournament_events").insert({
+      tournament_id: id,
+      type: "admin_note",
+      payload: {
+        kind: "merge_tables",
+        target_table: plan.targetTable,
+        moved: plan.moves.length,
+      },
+    });
 
     await refresh(id);
   });
