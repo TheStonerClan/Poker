@@ -16,12 +16,23 @@
 --
 -- Order matters: child rows go first to avoid FK violations.
 --
+-- `tournament_events` has a BEFORE DELETE trigger
+-- (`tournament_events_no_delete` from migration 0001) that enforces
+-- "append-only" by raising an exception on every row delete. We
+-- temporarily disable it for the wipe and re-enable it before COMMIT
+-- so the invariant is restored. If anything inside the transaction
+-- fails, the implicit ROLLBACK undoes the DISABLE too — the trigger
+-- can't get stuck in the wrong state.
+--
 -- This is a destructive one-shot — running it again is a no-op (DELETEs
 -- on already-empty tables) but the data it removes is gone for good.
 -- If you're applying this against a database that has REAL tournaments
 -- you want to keep, DON'T. Skip the migration or scope it with a WHERE.
 
 BEGIN;
+
+ALTER TABLE public.tournament_events
+  DISABLE TRIGGER tournament_events_no_delete;
 
 -- prize_distributions → tournaments
 DELETE FROM public.prize_distributions;
@@ -37,5 +48,8 @@ DELETE FROM public.tournament_players;
 
 -- tournaments (parent — last)
 DELETE FROM public.tournaments;
+
+ALTER TABLE public.tournament_events
+  ENABLE TRIGGER tournament_events_no_delete;
 
 COMMIT;
