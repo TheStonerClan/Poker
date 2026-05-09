@@ -449,6 +449,7 @@ export type Database = {
           starting_stack_composition_snapshot: Json
           starting_stack_snapshot: number
           status: string
+          tables_config: Json | null
           template_id: string
           updated_at: string
         }
@@ -478,6 +479,7 @@ export type Database = {
           starting_stack_composition_snapshot: Json
           starting_stack_snapshot: number
           status?: string
+          tables_config?: Json | null
           template_id: string
           updated_at?: string
         }
@@ -507,6 +509,7 @@ export type Database = {
           starting_stack_composition_snapshot?: Json
           starting_stack_snapshot?: number
           status?: string
+          tables_config?: Json | null
           template_id?: string
           updated_at?: string
         }

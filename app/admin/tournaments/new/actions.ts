@@ -6,13 +6,23 @@ import { z } from "zod";
 
 import { requireAdmin } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { randomizeAssignments } from "@/lib/admin/tables";
+import {
+  randomizeAssignments,
+  TABLE_COLORS,
+  type TableColor,
+  type TableConfig,
+} from "@/lib/admin/tables";
+
+const TableEntrySchema = z.object({
+  name: z.string().trim().min(1).max(40),
+  color: z.enum(TABLE_COLORS as readonly [TableColor, ...TableColor[]]),
+  max_seats: z.coerce.number().int().min(2).max(10),
+});
 
 const StartSchema = z.object({
   templateId: z.uuid(),
   playerIds: z.array(z.uuid()).min(2, "Pick at least two players."),
-  numTables: z.coerce.number().int().min(1).max(10),
-  maxSeatsPerTable: z.coerce.number().int().min(2).max(10),
+  tables: z.array(TableEntrySchema).min(1).max(10),
 });
 
 export type StartTournamentResult = {
@@ -23,8 +33,7 @@ export type StartTournamentResult = {
 export async function startTournament(input: {
   templateId: string;
   playerIds: string[];
-  numTables: number;
-  maxSeatsPerTable: number;
+  tables: TableConfig[];
 }): Promise<StartTournamentResult> {
   await requireAdmin();
   const parsed = StartSchema.safeParse(input);
@@ -35,11 +44,12 @@ export async function startTournament(input: {
     };
   }
 
-  const { templateId, playerIds, numTables, maxSeatsPerTable } = parsed.data;
-  if (playerIds.length > numTables * maxSeatsPerTable) {
+  const { templateId, playerIds, tables } = parsed.data;
+  const totalSeats = tables.reduce((s, t) => s + t.max_seats, 0);
+  if (playerIds.length > totalSeats) {
     return {
       status: "error",
-      message: `${playerIds.length} players don't fit in ${numTables} × ${maxSeatsPerTable} seats. Bump tables or seats.`,
+      message: `${playerIds.length} players don't fit in ${totalSeats} configured seats. Add a table or raise a seat cap.`,
     };
   }
   const supabase = await createClient();
@@ -93,8 +103,13 @@ export async function startTournament(input: {
       starting_stack_composition_snapshot: template.starting_stack_composition,
       blind_structure_snapshot: structure.levels,
       current_level: 1,
-      num_tables: numTables,
-      max_seats_per_table: maxSeatsPerTable,
+      // Legacy fields kept for backward compat with any reader that
+      // hasn't been updated to honor tables_config. Set to the count
+      // of tables and the max max_seats so a fallback resolution still
+      // gives the right shape.
+      num_tables: tables.length,
+      max_seats_per_table: Math.max(...tables.map((t) => t.max_seats)),
+      tables_config: tables,
     })
     .select("id")
     .single();
@@ -102,13 +117,11 @@ export async function startTournament(input: {
     return { status: "error", message: insErr?.message ?? "Could not create tournament" };
   }
 
-  // Randomize the roster onto (table, seat) before inserting. The randomize
-  // helper round-robins so table sizes stay balanced (ceil/floor of N/T).
-  const assignments = randomizeAssignments({
-    playerIds,
-    numTables,
-    maxSeatsPerTable,
-  });
+  // Randomize the roster onto (table, seat) before inserting. The
+  // helper greedily assigns to whichever table has the most remaining
+  // capacity, so stragglers naturally land at larger tables when caps
+  // are uneven.
+  const assignments = randomizeAssignments({ playerIds, tables });
   const tpRows = assignments.map((a) => ({
     tournament_id: tournament.id,
     player_id: a.player_id,
