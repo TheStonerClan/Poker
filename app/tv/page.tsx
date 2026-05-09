@@ -166,45 +166,55 @@ export default async function TvPage() {
     );
   }
 
-  const [{ data: players }, { data: events }] = await Promise.all([
-    supabase
-      .from("tournament_players")
-      .select(
-        `
-          id,
-          tournament_id,
-          player_id,
-          seat_number,
-          table_number,
-          current_chips,
-          buyback_used,
-          buyback_used_as,
-          buyback_used_at_level,
-          buyback_used_at_time,
-          busted_at_level,
-          busted_at_time,
-          finishing_position,
-          payout_amount,
-          claimed_session_id,
-          claimed_at,
-          created_at,
-          updated_at,
-          rebuys_used,
-          addons_used,
-          players ( id, name )
-        `,
-      )
-      .eq("tournament_id", tournamentRow.id),
-    // Bust + break events power the TV's "last segment" bust counter so it
-    // survives rebuys (which clear busted_at_time on the player row).
-    supabase
-      .from("tournament_events")
-      .select("type, payload, created_at")
-      .eq("tournament_id", tournamentRow.id)
-      .in("type", ["bust", "break_start", "break_end"])
-      .order("created_at", { ascending: true })
-      .limit(500),
-  ]);
+  const [{ data: players }, { data: events }, { data: colorUpData }] =
+    await Promise.all([
+      supabase
+        .from("tournament_players")
+        .select(
+          `
+            id,
+            tournament_id,
+            player_id,
+            seat_number,
+            table_number,
+            current_chips,
+            buyback_used,
+            buyback_used_as,
+            buyback_used_at_level,
+            buyback_used_at_time,
+            busted_at_level,
+            busted_at_time,
+            finishing_position,
+            payout_amount,
+            claimed_session_id,
+            claimed_at,
+            created_at,
+            updated_at,
+            rebuys_used,
+            addons_used,
+            players ( id, name )
+          `,
+        )
+        .eq("tournament_id", tournamentRow.id),
+      // Bust + break events power the TV's "last segment" bust counter so it
+      // survives rebuys (which clear busted_at_time on the player row).
+      supabase
+        .from("tournament_events")
+        .select("type, payload, created_at")
+        .eq("tournament_id", tournamentRow.id)
+        .in("type", ["bust", "break_start", "break_end"])
+        .order("created_at", { ascending: true })
+        .limit(500),
+      // Approved color-up exchanges. Sum of net_change is added to the
+      // tournament-wide chip total so round-ups (e.g. 23 → 25) show the
+      // +2 in the pool. Per-player rows let aggregateByTable attribute
+      // each delta to whichever table the player is currently sitting at.
+      supabase
+        .from("color_up_requests")
+        .select("player_id, exchange_for_chips")
+        .eq("tournament_id", tournamentRow.id)
+        .eq("status", "approved"),
+    ]);
 
   const initialPlayers = (players ?? []) as unknown as TournamentPlayerWithName[];
   const initialEvents = (events ?? []) as Array<{
@@ -212,6 +222,14 @@ export default async function TvPage() {
     payload: Record<string, unknown> | null;
     created_at: string;
   }>;
+  const initialColorUpGains = (colorUpData ?? [])
+    .map((row) => {
+      const efc = row.exchange_for_chips as { net_change?: number } | null;
+      const delta =
+        efc && typeof efc.net_change === "number" ? efc.net_change : 0;
+      return { player_id: row.player_id ?? "", net_change: delta };
+    })
+    .filter((g) => g.player_id !== "" && g.net_change !== 0);
 
   // Build the player-view base URL from the request host so QR codes work in
   // any environment (localhost, staging, prod) without a separate env var.
@@ -225,6 +243,7 @@ export default async function TvPage() {
       initialTournament={tournamentRow}
       initialPlayers={initialPlayers}
       initialEvents={initialEvents}
+      initialColorUpGains={initialColorUpGains}
       playSessionBaseUrl={playSessionBaseUrl}
     />
   );

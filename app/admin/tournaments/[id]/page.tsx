@@ -5,6 +5,7 @@ import { TopBar } from "@/components/admin/TopBar";
 import {
   blindLevels,
   currentLevel,
+  getApprovedColorUpGains,
   getPendingColorUpRequests,
   getTournament,
   getTournamentRoster,
@@ -45,20 +46,26 @@ export default async function LiveTournamentPage({
   if (!tournament) notFound();
 
   const supabase = await createClient();
-  const [roster, pendingColorUps, snapshotEventsRes] = await Promise.all([
-    getTournamentRoster(tournament.id),
-    getPendingColorUpRequests(tournament.id),
-    // Pull every chip_snapshot event for this tournament so we can show
-    // each player's latest self-reported total + the Δ from their
-    // previous report, on their PlayerGrid tile. Ordered ascending so
-    // the latestChipSnapshotPerPlayer reducer keeps the last one.
-    supabase
-      .from("tournament_events")
-      .select("type, payload, created_at")
-      .eq("tournament_id", tournament.id)
-      .eq("type", "chip_snapshot")
-      .order("created_at", { ascending: true }),
-  ]);
+  const [roster, pendingColorUps, colorUpGains, snapshotEventsRes] =
+    await Promise.all([
+      getTournamentRoster(tournament.id),
+      getPendingColorUpRequests(tournament.id),
+      // Net chip deltas from approved color-ups. Threaded into
+      // aggregateByTable below + the "X chips total" footer so a
+      // round-up exchange ($23 → $25) shows the +$2 in the pool.
+      getApprovedColorUpGains(tournament.id),
+      // Pull every chip_snapshot event for this tournament so we can show
+      // each player's latest self-reported total + the Δ from their
+      // previous report, on their PlayerGrid tile. Ordered ascending so
+      // the latestChipSnapshotPerPlayer reducer keeps the last one.
+      supabase
+        .from("tournament_events")
+        .select("type, payload, created_at")
+        .eq("tournament_id", tournament.id)
+        .eq("type", "chip_snapshot")
+        .order("created_at", { ascending: true }),
+    ]);
+  const colorUpDelta = colorUpGains.reduce((s, g) => s + g.net_change, 0);
   const snapshotEvents = (snapshotEventsRes.data ?? []) as ChipSnapshotEvent[];
   const latestSnapshotByPlayer = latestChipSnapshotPerPlayer(snapshotEvents);
 
@@ -161,6 +168,7 @@ export default async function LiveTournamentPage({
                     buyback.rebuyChips ?? tournament.rebuy_chips_snapshot ?? 0,
                   addOnChips: buyback.addOnChips ?? 0,
                 },
+                colorUpGains,
               });
               const counts = stats.map((s) => s.activePlayers);
               const spread =
@@ -350,7 +358,9 @@ export default async function LiveTournamentPage({
             </h2>
             <span className="text-xs text-fg/60">
               {/* Conservation: total chips in play = entries × starting +
-                  rebuys × rebuyChips + addons × addOnChips. Summing
+                  rebuys × rebuyChips + addons × addOnChips + sum of
+                  approved color-up net_changes (round-ups add chips to
+                  the pool — $23 → $25 puts +$2 in play). Summing
                   current_chips drops the total when players bust, but
                   the chips are still on the table. */}
               {formatChips(
@@ -358,7 +368,8 @@ export default async function LiveTournamentPage({
                   roster.reduce((s, r) => s + (r.rebuys_used ?? 0), 0) *
                     (tournament.rebuy_chips_snapshot ?? 0) +
                   roster.reduce((s, r) => s + (r.addons_used ?? 0), 0) *
-                    ((buybackCfg as { addOnChips?: number }).addOnChips ?? 0),
+                    ((buybackCfg as { addOnChips?: number }).addOnChips ?? 0) +
+                  colorUpDelta,
               )}{" "}
               chips total
             </span>

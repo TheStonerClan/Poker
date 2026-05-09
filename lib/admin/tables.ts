@@ -323,9 +323,35 @@ export function aggregateByTable(args: {
   rows: PerTableRow[];
   tablesConfig: TableConfig[];
   chipsCfg: ChipsCfg;
+  /**
+   * Net chip deltas from approved color-up exchanges, keyed by the
+   * player who color-upped. Attributed to whichever table the player
+   * currently sits at — when a player has color-upped on multiple
+   * tables (post-balance/merge) the delta lives at their CURRENT table,
+   * which is the table whose total actually now holds those chips.
+   */
+  colorUpGains?: { player_id: string; net_change: number }[];
 }): TableStats[] {
-  const { rows, tablesConfig, chipsCfg } = args;
+  const { rows, tablesConfig, chipsCfg, colorUpGains } = args;
   const out: TableStats[] = [];
+
+  // Build a player_id -> table_number map so per-table color-up sums
+  // can be attributed without scanning the full roster per table.
+  const playerTable = new Map<string, number>();
+  for (const r of rows) {
+    if (r.player_id != null && r.table_number != null) {
+      playerTable.set(r.player_id, r.table_number);
+    }
+  }
+
+  // Pre-aggregate per-table color-up deltas so we don't loop the gains
+  // list once per table.
+  const colorUpByTable = new Map<number, number>();
+  for (const g of colorUpGains ?? []) {
+    const t = playerTable.get(g.player_id);
+    if (t == null) continue;
+    colorUpByTable.set(t, (colorUpByTable.get(t) ?? 0) + g.net_change);
+  }
 
   for (let i = 0; i < tablesConfig.length; i++) {
     const cfg = tablesConfig[i];
@@ -355,10 +381,12 @@ export function aggregateByTable(args: {
     }
 
     const seatedPlayers = tableRows.length;
+    const colorUpDelta = colorUpByTable.get(tableNumber) ?? 0;
     const totalChips =
       seatedPlayers * chipsCfg.startingStack +
       rebuys * chipsCfg.rebuyChips +
-      addOns * chipsCfg.addOnChips;
+      addOns * chipsCfg.addOnChips +
+      colorUpDelta;
     const averageChips =
       activePlayers > 0 ? Math.round(totalChips / activePlayers) : 0;
 
