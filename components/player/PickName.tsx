@@ -21,10 +21,20 @@ type Props = {
 
 export function PickName({ sessionId, roster }: Props) {
   const router = useRouter();
-  const { ready, claimedPlayerIds } = useTournamentPresence(sessionId);
   const [attempting, setAttempting] = useState<PickNameRosterEntry | null>(
     null,
   );
+  // Disable the observer the moment the user starts a claim. Both hooks
+  // would otherwise subscribe to the same Realtime topic, and supabase-js
+  // v2 dedupes channels by name — the second subscriber lands on an
+  // already-`joined` instance and throws "cannot add presence callbacks
+  // ... after 'subscribe()'". With the observer disabled, its cleanup
+  // tears the channel down synchronously and usePlayerClaim creates a
+  // fresh subscription.
+  const observerEnabled = attempting === null;
+  const { ready, claimedPlayerIds } = useTournamentPresence(sessionId, {
+    enabled: observerEnabled,
+  });
   const { status } = usePlayerClaim(sessionId, attempting?.playerId ?? null);
 
   useEffect(() => {
