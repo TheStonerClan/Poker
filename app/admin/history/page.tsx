@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import HistogramBars from "@/components/admin/HistogramBars";
+import LocalDateTime from "@/components/admin/LocalDateTime";
 import { TopBar } from "@/components/admin/TopBar";
 import { requireAdmin } from "@/lib/auth";
 import { formatChips, formatMoney } from "@/lib/admin/format";
@@ -8,6 +9,7 @@ import {
   buildBustHistogram,
   buildLeaderboard,
   buildTournamentSummaries,
+  tokenCounts,
   type BustEvent,
   type FinishedTournament,
   type PayoutRow,
@@ -62,21 +64,14 @@ export default async function HistoryPage() {
     { data: payoutsData },
     { data: eventsData },
   ] = await Promise.all([
+    // SELECT * so the query doesn't fail on a DB that hasn't run
+    // migration 0003 (which adds rebuys_used / addons_used). The
+    // history-stats helpers fall back to the legacy buyback_used flag
+    // for token counts when the new columns aren't there. Using `*`
+    // alongside the players relation join is supported by postgrest.
     supabase
       .from("tournament_players")
-      .select(
-        `
-          tournament_id,
-          player_id,
-          finishing_position,
-          buyback_used,
-          buyback_used_as,
-          rebuys_used,
-          addons_used,
-          busted_at_level,
-          player:players(id, name)
-        `,
-      )
+      .select("*, player:players(id, name)")
       .in("tournament_id", tournamentIds),
     supabase
       .from("prize_distributions")
@@ -98,10 +93,18 @@ export default async function HistoryPage() {
   const histogram = buildBustHistogram(bustEvents);
   const summaries = buildTournamentSummaries({ tournaments, roster, payouts });
 
-  // 4. Headline counts above the leaderboard.
+  // 4. Headline counts above the leaderboard. Use tokenCounts so we get
+  //    the right rebuy/addon totals whether or not migration 0003 has
+  //    been applied to the DB.
   const totalEntries = roster.length;
-  const totalRebuys = roster.reduce((s, r) => s + (r.rebuys_used ?? 0), 0);
-  const totalAddOns = roster.reduce((s, r) => s + (r.addons_used ?? 0), 0);
+  let totalRebuys = 0;
+  let totalAddOns = 0;
+  for (const r of roster) {
+    const c = tokenCounts(r);
+    totalRebuys += c.rebuys;
+    totalAddOns += c.addOns;
+  }
+  void totalAddOns; // surfaced indirectly through summaries; reserved for a future "add-ons" headline
   const totalPool = payouts.reduce((s, p) => s + p.amount, 0);
   const choppedCount = summaries.filter((s) => s.chopped).length;
 
@@ -197,17 +200,15 @@ export default async function HistoryPage() {
                 >
                   <div className="flex items-baseline justify-between gap-2">
                     <p className="text-sm font-semibold text-fg">
-                      {t.finishedAt
-                        ? new Date(t.finishedAt).toLocaleString(undefined, {
-                            month: "short",
-                            day: "numeric",
-                            hour: "numeric",
-                            minute: "2-digit",
-                          })
-                        : "—"}
+                      <LocalDateTime iso={t.finishedAt} />
                     </p>
                     <p className="font-mono text-xs tabular-nums text-fg/70">
                       {formatMoney(t.prizePool)} pool
+                      {t.buyIn > 0 ? (
+                        <span className="ml-2 text-fg/40">
+                          · {formatMoney(t.buyIn)} buy-in
+                        </span>
+                      ) : null}
                     </p>
                   </div>
                   <div className="mt-1 flex items-baseline justify-between gap-2 text-xs text-fg/60">

@@ -94,10 +94,18 @@ export default function TvDisplay({
     accumulatedPauseMs: tournament.accumulated_pause_ms ?? 0,
   });
 
-  const counts = aggregatePlayers(players);
-
   const buyback = (tournament.buyback_config_snapshot ?? {}) as BuybackConfig;
   const buybackPrice = buyback.price ?? tournament.rebuy_price_snapshot ?? 0;
+  const counts = aggregatePlayers(players, {
+    // Conservation of chips: total in play = entries * starting_stack +
+    // rebuys * rebuyChips + addOns * addOnChips. Without these inputs the
+    // total drops every time someone busts, which doesn't match what's
+    // actually on the table.
+    startingStack: tournament.starting_stack_snapshot ?? 0,
+    rebuyChips:
+      buyback.rebuyChips ?? tournament.rebuy_chips_snapshot ?? 0,
+    addOnChips: buyback.addOnChips ?? 0,
+  });
   const totalBuybacks = counts.reEntries + counts.addOns;
 
   const prizeRules = tournament.prize_rules_snapshot as unknown as PrizeRules;

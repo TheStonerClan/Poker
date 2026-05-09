@@ -60,22 +60,46 @@ export default async function PlayerHomePage({ params }: Props) {
   );
   const currentLevel = levelAt(blindLevels, tournament.current_level);
 
-  // The schema stores prize_rules_snapshot as the FULL PrizeConfig object
-  // ({ rules, rounding, guarantee?, overlay? }), not just the rules array.
-  // The earlier shape ({ rules: snapshot as PrizeRule[] }) crashed during
-  // computePayouts because [...config.rules] tried to spread a plain object
-  // — that's the "can't load the page" the player saw at color-up break.
-  const prizeConfig =
-    (tournament.prize_rules_snapshot as PrizeConfig | null) ?? {
-      rules: [],
-      rounding: { increment: 1, surplusToFirst: true },
-    };
+  // The schema stores prize_rules_snapshot as the FULL PrizeConfig object,
+  // but historic tournaments may have a partial snapshot (missing rules,
+  // missing rounding, etc.) and we don't want a render-time crash on the
+  // player view to take the page down. Build a defensive PrizeConfig and
+  // wrap the actual computation in try/catch.
+  const rawPrize = tournament.prize_rules_snapshot as
+    | Record<string, unknown>
+    | null;
+  const prizeConfig: PrizeConfig = {
+    rules: Array.isArray(rawPrize?.rules)
+      ? (rawPrize.rules as PrizeConfig["rules"])
+      : [],
+    rounding:
+      (rawPrize?.rounding as PrizeConfig["rounding"] | undefined) ?? {
+        increment: 1,
+        surplusToFirst: true,
+      },
+    guarantee:
+      typeof rawPrize?.guarantee === "number" ? rawPrize.guarantee : undefined,
+    overlay:
+      typeof rawPrize?.overlay === "boolean" ? rawPrize.overlay : undefined,
+  };
 
-  const payouts = computePayouts(prizeConfig, {
-    buyIns,
-    buybacks,
-    buyInPrice: tournament.buy_in_snapshot,
-  });
+  let payouts: ReturnType<typeof computePayouts>;
+  try {
+    payouts = computePayouts(prizeConfig, {
+      buyIns,
+      buybacks,
+      buyInPrice: tournament.buy_in_snapshot,
+    });
+  } catch {
+    // Bad snapshot shape → render with zero payouts rather than 500-ing
+    // the player view. The "Stats" tab still works; only "Position if
+    // bust → $X" loses meaning, which is acceptable for a degraded
+    // mode. Surface a hint in dev via console.
+    if (process.env.NODE_ENV !== "production") {
+      console.warn("computePayouts failed for player view", { rawPrize });
+    }
+    payouts = { payouts: [], effectivePool: 0, remainder: 0, overlay: 0 };
+  }
 
   // Position if you bust next: you're the next to fall, so you finish at
   // the current active count.

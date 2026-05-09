@@ -1,19 +1,37 @@
 import type { PlayerCounts, TournamentPlayerWithName } from "./types";
 
+export type ChipAccountingInputs = {
+  /**
+   * Per-player starting stack from the tournament snapshot (seed: 500).
+   * Each row contributes one starting stack to the chips-in-play pool.
+   */
+  startingStack: number;
+  /**
+   * Chips granted per rebuy (seed: 500). Each rebuy adds this to the pool.
+   */
+  rebuyChips: number;
+  /**
+   * Chips granted per add-on (seed: 500). Each add-on adds this to the pool.
+   */
+  addOnChips: number;
+};
+
 export function aggregatePlayers(
   rows: TournamentPlayerWithName[],
+  chipsCfg?: ChipAccountingInputs,
 ): PlayerCounts {
   let reEntries = 0;
   let addOns = 0;
-  let activeChips = 0;
   let activePlayers = 0;
+  let activeChipsSum = 0;
 
   for (const r of rows) {
     // Prefer the per-row counters when present (added in 0003 to support
     // configurable rebuy limits — a player can rebuy AND addon, or rebuy
     // multiple times if tokensPerPlayer > 1). Fall back to the legacy
     // most-recent-type fields when the counters are zero so historical
-    // rows without backfill still aggregate correctly.
+    // rows without backfill (or DBs that haven't run 0003 yet) still
+    // aggregate correctly.
     const rowRebuys =
       typeof r.rebuys_used === "number" && r.rebuys_used > 0
         ? r.rebuys_used
@@ -30,7 +48,7 @@ export function aggregatePlayers(
     addOns += rowAddOns;
     if (r.busted_at_time == null) {
       activePlayers += 1;
-      activeChips += r.current_chips ?? 0;
+      activeChipsSum += r.current_chips ?? 0;
     }
   }
 
@@ -40,15 +58,32 @@ export function aggregatePlayers(
   // source of the "rebuy adds $40 to the pool instead of $20" bug.
   const entries = rows.length;
 
+  // Total chips IN PLAY, derived from the buy-in side. When a player busts
+  // their stack doesn't disappear — whoever knocked them out has it — so
+  // summing `current_chips` is the wrong model (we'd watch the total decay
+  // toward whatever the last recorded chip totals were). Instead: every
+  // paid entry contributes one starting stack, every rebuy contributes
+  // rebuyChips, every add-on contributes addOnChips. Conservation holds
+  // through busts, and the average rises as players fall — which is what
+  // anyone reading the TV expects.
+  //
+  // If `chipsCfg` isn't supplied (older callers, tests), fall back to the
+  // active-row sum so the function stays a drop-in replacement.
+  const totalChips = chipsCfg
+    ? entries * chipsCfg.startingStack +
+      reEntries * chipsCfg.rebuyChips +
+      addOns * chipsCfg.addOnChips
+    : activeChipsSum;
+
   const averageChips =
-    activePlayers > 0 ? Math.round(activeChips / activePlayers) : 0;
+    activePlayers > 0 ? Math.round(totalChips / activePlayers) : 0;
 
   return {
     players: activePlayers,
     entries,
     reEntries,
     addOns,
-    totalChips: activeChips,
+    totalChips,
     averageChips,
   };
 }

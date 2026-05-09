@@ -185,7 +185,18 @@ export default async function LiveTournamentPage({
               Projected payouts
             </h2>
             <span className="text-xs text-fg/60">
-              {formatChips(roster.reduce((s, r) => s + r.current_chips, 0))} chips total
+              {/* Conservation: total chips in play = entries × starting +
+                  rebuys × rebuyChips + addons × addOnChips. Summing
+                  current_chips drops the total when players bust, but
+                  the chips are still on the table. */}
+              {formatChips(
+                roster.length * (tournament.starting_stack_snapshot ?? 0) +
+                  roster.reduce((s, r) => s + (r.rebuys_used ?? 0), 0) *
+                    (tournament.rebuy_chips_snapshot ?? 0) +
+                  roster.reduce((s, r) => s + (r.addons_used ?? 0), 0) *
+                    ((buybackCfg as { addOnChips?: number }).addOnChips ?? 0),
+              )}{" "}
+              chips total
             </span>
           </div>
           <ul className="mt-2 flex flex-col gap-1 text-sm">

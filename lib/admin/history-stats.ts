@@ -23,11 +23,48 @@ export type RosterRow = {
   finishing_position: number | null;
   buyback_used: boolean;
   buyback_used_as: string | null;
-  rebuys_used: number | null;
-  addons_used: number | null;
+  /**
+   * Per-row rebuy counter introduced in migration 0003. Optional/null on
+   * databases that haven't applied 0003 — read via `tokenCounts(row)`
+   * which falls back to the legacy `buyback_used`+`buyback_used_as`
+   * boolean pair so analytics still work for default-1 tournaments.
+   */
+  rebuys_used?: number | null;
+  /** Per-row add-on counter; same 0003 caveat as `rebuys_used`. */
+  addons_used?: number | null;
   busted_at_level: number | null;
   player: { id: string; name: string } | null;
 };
+
+/**
+ * Pull the rebuy + add-on token counts from a roster row, preferring the
+ * 0003-era integer counters when present and falling back to the legacy
+ * boolean flag (`buyback_used` + `buyback_used_as`) otherwise. With
+ * `tokensPerPlayer = 1` (the only tournament configuration in use today)
+ * the two encodings carry the same information; this helper hides the
+ * choice from every consumer so a DB without 0003 still aggregates
+ * correctly.
+ */
+export function tokenCounts(row: {
+  rebuys_used?: number | null;
+  addons_used?: number | null;
+  buyback_used: boolean;
+  buyback_used_as: string | null;
+}): { rebuys: number; addOns: number } {
+  const rebuys =
+    typeof row.rebuys_used === "number" && row.rebuys_used > 0
+      ? row.rebuys_used
+      : row.buyback_used && row.buyback_used_as === "rebuy"
+        ? 1
+        : 0;
+  const addOns =
+    typeof row.addons_used === "number" && row.addons_used > 0
+      ? row.addons_used
+      : row.buyback_used && row.buyback_used_as === "addon"
+        ? 1
+        : 0;
+  return { rebuys, addOns };
+}
 
 export type PayoutRow = {
   tournament_id: string;
@@ -190,8 +227,13 @@ export function buildTournamentSummaries(args: {
   return tournaments.map((t) => {
     const tournRoster = rosterByTourn.get(t.id) ?? [];
     const tournPayouts = payoutsByTourn.get(t.id) ?? [];
-    const rebuys = tournRoster.reduce((s, r) => s + (r.rebuys_used ?? 0), 0);
-    const addOns = tournRoster.reduce((s, r) => s + (r.addons_used ?? 0), 0);
+    let rebuys = 0;
+    let addOns = 0;
+    for (const r of tournRoster) {
+      const c = tokenCounts(r);
+      rebuys += c.rebuys;
+      addOns += c.addOns;
+    }
     const prizePool = tournPayouts.reduce((s, p) => s + p.amount, 0);
     const chopped = tournPayouts.some((p) => p.is_chopped);
     const winnerRow = tournRoster.find((r) => r.finishing_position === 1);

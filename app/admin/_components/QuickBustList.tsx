@@ -44,13 +44,15 @@ export function QuickBustList({
             onClick={() => {
               setPendingId(r.tournament_player_id);
               start(async () => {
-                try {
-                  await bustPlayer({
-                    tournamentPlayerId: r.tournament_player_id,
-                  });
-                } finally {
-                  setPendingId(null);
-                }
+                // bustPlayer now returns { ok, error? } so production
+                // error messages aren't redacted by Next 16. We don't
+                // surface them on the dashboard's quick list (simpler
+                // UX), but we still wait for the action to finish
+                // before clearing the spinner.
+                await bustPlayer({
+                  tournamentPlayerId: r.tournament_player_id,
+                });
+                setPendingId(null);
               });
             }}
             className="ml-3 inline-flex h-11 min-h-[44px] items-center justify-center rounded-md border border-danger/60 px-3 text-xs font-semibold uppercase tracking-wider text-danger disabled:opacity-50"
