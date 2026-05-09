@@ -7,7 +7,7 @@ import { z } from "zod";
 import { requireAdmin } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { blindLevels } from "@/lib/admin/queries";
-import { randomizeAssignments } from "@/lib/admin/tables";
+import { randomizeAssignments, resolveTablesConfig } from "@/lib/admin/tables";
 import { computePayouts } from "prize-math";
 import type { TablesUpdate } from "@/lib/database.types";
 
@@ -705,7 +705,7 @@ export async function randomizeTableAssignments(
 
     const { data: t, error: tErr } = await supabase
       .from("tournaments")
-      .select("status, num_tables, max_seats_per_table")
+      .select("status, num_tables, max_seats_per_table, tables_config")
       .eq("id", id)
       .maybeSingle();
     if (tErr || !t) throw new Error(tErr?.message ?? "Tournament not found");
@@ -714,9 +714,13 @@ export async function randomizeTableAssignments(
         `Re-randomize is only available while the tournament is scheduled (currently ${t.status}).`,
       );
     }
-    const numTables = t.num_tables;
-    const maxSeats = t.max_seats_per_table;
-    if (numTables == null || maxSeats == null) {
+
+    const tables = resolveTablesConfig({
+      tablesConfig: t.tables_config,
+      numTables: t.num_tables,
+      maxSeatsPerTable: t.max_seats_per_table,
+    });
+    if (tables.length === 0) {
       throw new Error(
         "This tournament was created before table management — open a new tournament to use it.",
       );
@@ -733,8 +737,7 @@ export async function randomizeTableAssignments(
 
     const assignments = randomizeAssignments({
       playerIds: rows.map((r) => r.id),
-      numTables,
-      maxSeatsPerTable: maxSeats,
+      tables,
     });
 
     // Two-phase update: clear seats first, then assign. The unique index

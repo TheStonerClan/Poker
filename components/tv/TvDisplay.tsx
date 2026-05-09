@@ -11,6 +11,8 @@ import ClockRing from "@/components/tv/ClockRing";
 import NextLevel from "@/components/tv/NextLevel";
 import { PlayerHeader, StackStats } from "@/components/tv/PlayerStats";
 import PrizePool from "@/components/tv/PrizePool";
+import TableLeaders from "@/components/tv/TableLeaders";
+import { aggregateByTable, resolveTablesConfig } from "@/lib/admin/tables";
 import { useDriftSync } from "@/lib/timer/useDriftSync";
 import { useLevelClock } from "@/lib/timer/useLevelClock";
 import { aggregatePlayers } from "@/lib/tv/aggregate";
@@ -96,17 +98,31 @@ export default function TvDisplay({
 
   const buyback = (tournament.buyback_config_snapshot ?? {}) as BuybackConfig;
   const buybackPrice = buyback.price ?? tournament.rebuy_price_snapshot ?? 0;
-  const counts = aggregatePlayers(players, {
+  const chipsCfg = {
     // Conservation of chips: total in play = entries * starting_stack +
     // rebuys * rebuyChips + addOns * addOnChips. Without these inputs the
     // total drops every time someone busts, which doesn't match what's
     // actually on the table.
     startingStack: tournament.starting_stack_snapshot ?? 0,
-    rebuyChips:
-      buyback.rebuyChips ?? tournament.rebuy_chips_snapshot ?? 0,
+    rebuyChips: buyback.rebuyChips ?? tournament.rebuy_chips_snapshot ?? 0,
     addOnChips: buyback.addOnChips ?? 0,
-  });
+  };
+  const counts = aggregatePlayers(players, chipsCfg);
   const totalBuybacks = counts.reEntries + counts.addOns;
+
+  // Per-table breakdown for the chip-leader / average strip. Same
+  // chip-conservation model, scoped to each table's seated players. The
+  // strip itself is hidden by the component for single-table tournaments.
+  const tablesConfig = resolveTablesConfig({
+    tablesConfig: tournament.tables_config,
+    numTables: tournament.num_tables,
+    maxSeatsPerTable: tournament.max_seats_per_table,
+  });
+  const tableStats = aggregateByTable({
+    rows: players,
+    tablesConfig,
+    chipsCfg,
+  });
 
   const prizeRules = tournament.prize_rules_snapshot as unknown as PrizeRules;
   const rawPool = computePool({
@@ -243,6 +259,15 @@ export default function TvDisplay({
           <PrizePool totalPool={effectivePool} payouts={payouts} />
         </div>
       </main>
+
+      {/* TABLE LEADERS — per-table chip leader + average for multi-table
+          tournaments. Hidden when there's only one table (the
+          tournament-wide stats in the footer cover everything). */}
+      {tableStats.length > 1 ? (
+        <section className="px-[clamp(1rem,3vw,3rem)] pb-[clamp(0.5rem,1vh,1rem)]">
+          <TableLeaders stats={tableStats} bigBlind={currentLevel?.big} />
+        </section>
+      ) : null}
 
       <hr className="border-t border-gold/40 mx-[clamp(0.5rem,2vw,2rem)]" />
 
