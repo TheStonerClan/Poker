@@ -524,7 +524,11 @@ function TablesStep({
           disabled={pending || !fits || playerCount < 2}
           className="h-12 min-h-[44px] flex-1 rounded-md bg-gold text-sm font-semibold text-bg disabled:opacity-50"
         >
-          {pending ? "Starting…" : `Start (${playerCount})`}
+          {/* "Save" rather than "Start": this button stages the
+              tournament with status='scheduled' (creates the row,
+              seats players) and redirects to the detail page. The
+              actual timer-start happens there via LevelControls. */}
+          {pending ? "Saving…" : `Save (${playerCount})`}
         </button>
       </StickyActions>
     </>

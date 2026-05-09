@@ -7,6 +7,7 @@ import {
   currentLevel,
   getApprovedColorUpGains,
   getPendingColorUpRequests,
+  getPlayers,
   getTournament,
   getTournamentRoster,
   nextLevel,
@@ -32,6 +33,10 @@ import { PlayerGrid } from "./_components/PlayerGrid";
 import { ColorUpInbox } from "./_components/ColorUpInbox";
 import { FinalizeButton } from "./_components/FinalizeButton";
 import { RerandomizeButton } from "./_components/RerandomizeButton";
+import {
+  AddPlayersPicker,
+  RemovePlayerButton,
+} from "./_components/RosterControls";
 import { TableActions } from "./_components/TableActions";
 
 export const dynamic = "force-dynamic";
@@ -46,25 +51,35 @@ export default async function LiveTournamentPage({
   if (!tournament) notFound();
 
   const supabase = await createClient();
-  const [roster, pendingColorUps, colorUpGains, snapshotEventsRes] =
-    await Promise.all([
-      getTournamentRoster(tournament.id),
-      getPendingColorUpRequests(tournament.id),
-      // Net chip deltas from approved color-ups. Threaded into
-      // aggregateByTable below + the "X chips total" footer so a
-      // round-up exchange ($23 → $25) shows the +$2 in the pool.
-      getApprovedColorUpGains(tournament.id),
-      // Pull every chip_snapshot event for this tournament so we can show
-      // each player's latest self-reported total + the Δ from their
-      // previous report, on their PlayerGrid tile. Ordered ascending so
-      // the latestChipSnapshotPerPlayer reducer keeps the last one.
-      supabase
-        .from("tournament_events")
-        .select("type, payload, created_at")
-        .eq("tournament_id", tournament.id)
-        .eq("type", "chip_snapshot")
-        .order("created_at", { ascending: true }),
-    ]);
+  // Master players list is only needed when status='scheduled' (drives
+  // the "add players" picker). Skip the query otherwise to keep the
+  // running-tournament render path lean.
+  const isScheduled = tournament.status === "scheduled";
+  const [
+    roster,
+    pendingColorUps,
+    colorUpGains,
+    snapshotEventsRes,
+    allPlayers,
+  ] = await Promise.all([
+    getTournamentRoster(tournament.id),
+    getPendingColorUpRequests(tournament.id),
+    // Net chip deltas from approved color-ups. Threaded into
+    // aggregateByTable below + the "X chips total" footer so a
+    // round-up exchange ($23 → $25) shows the +$2 in the pool.
+    getApprovedColorUpGains(tournament.id),
+    // Pull every chip_snapshot event for this tournament so we can show
+    // each player's latest self-reported total + the Δ from their
+    // previous report, on their PlayerGrid tile. Ordered ascending so
+    // the latestChipSnapshotPerPlayer reducer keeps the last one.
+    supabase
+      .from("tournament_events")
+      .select("type, payload, created_at")
+      .eq("tournament_id", tournament.id)
+      .eq("type", "chip_snapshot")
+      .order("created_at", { ascending: true }),
+    isScheduled ? getPlayers() : Promise.resolve([]),
+  ]);
   const colorUpDelta = colorUpGains.reduce((s, g) => s + g.net_change, 0);
   const snapshotEvents = (snapshotEventsRes.data ?? []) as ChipSnapshotEvent[];
   const latestSnapshotByPlayer = latestChipSnapshotPerPlayer(snapshotEvents);
@@ -264,9 +279,14 @@ export default async function LiveTournamentPage({
                                     >
                                       {p.seat_number ?? "—"}
                                     </span>
-                                    <span className="text-fg">
+                                    <span className="flex-1 text-fg">
                                       {p.player?.name ?? "—"}
                                     </span>
+                                    <RemovePlayerButton
+                                      tournamentId={tournament.id}
+                                      tournamentPlayerId={p.id}
+                                      playerName={p.player?.name ?? "this player"}
+                                    />
                                   </li>
                                 ))}
                               </ul>
@@ -281,6 +301,30 @@ export default async function LiveTournamentPage({
             <div className="mt-3">
               <RerandomizeButton tournamentId={tournament.id} />
             </div>
+
+            <div className="mt-4 border-t border-fg/10 pt-3">
+              <h3 className="text-label text-[10px] font-semibold uppercase tracking-[0.25em]">
+                Add players
+              </h3>
+              <p className="mt-1 text-[10px] text-fg/50">
+                Late RSVPs land in the lowest free seat at whichever
+                table has the most room. Hit Re-randomize above if you
+                want a fresh shuffle of everyone.
+              </p>
+              <div className="mt-2">
+                <AddPlayersPicker
+                  tournamentId={tournament.id}
+                  allPlayers={allPlayers.map((p) => ({
+                    id: p.id,
+                    name: p.name,
+                  }))}
+                  rosteredPlayerIds={roster
+                    .map((r) => r.player_id)
+                    .filter((id): id is string => Boolean(id))}
+                />
+              </div>
+            </div>
+
             <p className="mt-2 text-[10px] text-fg/50">
               The TV is showing this layout to walk-ins. Once you advance
               past Level 0 (or otherwise start the timer) the screen flips
