@@ -197,21 +197,20 @@ export async function bustPlayer(input: {
       .eq("id", tp.tournament_id)
       .maybeSingle();
 
-    // Compute the player's finishing position. The 1st-to-bust in a 10-player
-    // field finishes 10th, the 2nd-to-bust finishes 9th, … last-to-bust
-    // finishes 2nd, the survivor is 1st. So the busted player's position is
-    // the count of currently-active players (including this one, before we
-    // mark them out).
     const { data: roster } = await supabase
       .from("tournament_players")
       .select("id, busted_at_time")
       .eq("tournament_id", tp.tournament_id);
 
-    const activeBeforeBust = (roster ?? []).filter(
-      (r) => r.id === tournamentPlayerId || !r.busted_at_time,
-    ).length;
-    const finishingPosition = activeBeforeBust;
-
+    // Don't set finishing_position here. We used to compute it as the
+    // active count at bust time, but that collides under rebuys: if
+    // player A busts at 8, rebuys, then player B busts when 8 are still
+    // active, B and the (now-cleared) A would both claim position 8 in
+    // sequence, and the unique index on (tournament_id,
+    // finishing_position) rejects the second write. Positions are now
+    // assigned exclusively by performFinalize, sorting by
+    // busted_at_time, so each player gets exactly one final position
+    // regardless of how many rebuys they cycled through.
     const now = new Date().toISOString();
     const { error } = await supabase
       .from("tournament_players")
@@ -219,7 +218,6 @@ export async function bustPlayer(input: {
         busted_at_level: t?.current_level ?? null,
         busted_at_time: now,
         current_chips: 0,
-        finishing_position: finishingPosition,
       })
       .eq("id", tournamentPlayerId);
     if (error) throw new Error(error.message);
@@ -231,24 +229,16 @@ export async function bustPlayer(input: {
         tournament_player_id: tournamentPlayerId,
         player_id: tp.player_id,
         at_level: t?.current_level ?? null,
-        finishing_position: finishingPosition,
       },
     });
 
-    // Auto-finalize when only one player remains. Set the survivor's
-    // finishing_position=1 and run the same finalize logic the manual button
-    // would, except we redirect to the live page (recap) instead of the
-    // dashboard so the admin sees the result without an extra click.
+    // Auto-finalize when only one player remains. performFinalize now
+    // computes finishing_position for everyone (busted in chronological
+    // order + the survivor at 1) so we don't need to pre-set anything.
     const survivors = (roster ?? []).filter(
       (r) => r.id !== tournamentPlayerId && !r.busted_at_time,
     );
     if (survivors.length === 1) {
-      const winnerId = survivors[0].id;
-      await supabase
-        .from("tournament_players")
-        .update({ finishing_position: 1 })
-        .eq("id", winnerId);
-
       await performFinalize(supabase, tp.tournament_id, {
         chopTopTwo: false,
         autoFromLastBust: true,
@@ -564,6 +554,88 @@ async function performFinalize(
     .eq("tournament_id", tournamentId);
 
   const players = roster ?? [];
+
+  // Compute finishing_position for everyone now (single authoritative
+  // assignment). Algorithm:
+  //   - Survivors (busted_at_time IS NULL) split position 1 evenly. The
+  //     normal case is one survivor → 1; chop sets two heads-up players
+  //     to 1 and 2 with the chop flag on the payouts side.
+  //   - Busted players sort by busted_at_time ASCENDING (earliest bust
+  //     first). The earliest bust gets position N (worst), the next gets
+  //     N-1, and so on, leaving position 2 for the last to bust.
+  // Re-bought players' busted_at_time reflects their LAST bust, so they
+  // get one final position regardless of how many cycles they survived.
+  // Clearing existing finishing_position values first lets us reassign
+  // without colliding on the unique partial index.
+  const survivors = players.filter((p) => p.busted_at_time == null);
+  const busted = players
+    .filter((p) => p.busted_at_time != null)
+    .sort((a, b) => {
+      const at = new Date(a.busted_at_time as string).getTime();
+      const bt = new Date(b.busted_at_time as string).getTime();
+      return at - bt;
+    });
+
+  const N = players.length;
+  const positionUpdates: Array<{ id: string; position: number }> = [];
+
+  // Survivors → 1 (and 2 for chop). The current schema's unique partial
+  // index allows multiple survivors only if some have NULL position;
+  // when there are 2 survivors and chop is off, give them positions 1
+  // and 2 by tournament_player.id order so we don't violate the index
+  // when a manual finalize-with-2-still-in happens.
+  if (survivors.length === 1) {
+    positionUpdates.push({ id: survivors[0].id, position: 1 });
+  } else if (survivors.length >= 2) {
+    const sorted = [...survivors].sort((a, b) => a.id.localeCompare(b.id));
+    positionUpdates.push({ id: sorted[0].id, position: 1 });
+    if (sorted[1]) positionUpdates.push({ id: sorted[1].id, position: 2 });
+    // Any extra survivors (shouldn't happen for a sane finalize) get
+    // pushed onto the end of the busted-by-time list to fill positions
+    // 3, 4, … in their id order. Defensive.
+    for (let i = 2; i < sorted.length; i++) {
+      positionUpdates.push({ id: sorted[i].id, position: i + 1 });
+    }
+  }
+
+  // Busted, in chronological order. The first to bust earns position N,
+  // working down toward 2. We start at N and decrement, but skip any
+  // positions already claimed by survivors above.
+  const claimed = new Set(positionUpdates.map((p) => p.position));
+  let nextBustPosition = N;
+  for (const b of busted) {
+    while (claimed.has(nextBustPosition)) nextBustPosition--;
+    positionUpdates.push({ id: b.id, position: nextBustPosition });
+    claimed.add(nextBustPosition);
+    nextBustPosition--;
+  }
+
+  // Two-phase: clear existing finishing_position values so the new ones
+  // don't collide with stale data from earlier busts during the assignment
+  // pass.
+  const { error: clearErr } = await supabase
+    .from("tournament_players")
+    .update({ finishing_position: null })
+    .eq("tournament_id", tournamentId);
+  if (clearErr) throw new Error(clearErr.message);
+
+  for (const u of positionUpdates) {
+    const { error: upErr } = await supabase
+      .from("tournament_players")
+      .update({ finishing_position: u.position })
+      .eq("id", u.id);
+    if (upErr) throw new Error(upErr.message);
+  }
+
+  // Re-fetch with the freshly assigned positions for use by the payout
+  // ranking below. Cheaper than mutating the in-memory array piecemeal.
+  const { data: rankedRoster } = await supabase
+    .from("tournament_players")
+    .select(
+      "id, player_id, buyback_used, rebuys_used, addons_used, busted_at_time, finishing_position",
+    )
+    .eq("tournament_id", tournamentId);
+  const rankedPlayers = rankedRoster ?? players;
   // Sum the per-player counters so buybacks reflects actual paid entries
   // when tokensPerPlayer > 1. The counter columns default to 0 and the
   // 0003 backfill set them to 1 for legacy rows that already had
@@ -615,7 +687,7 @@ async function performFinalize(
     }));
   }
 
-  const ranked = [...players].sort((a, b) => {
+  const ranked = [...rankedPlayers].sort((a, b) => {
     const ap = a.finishing_position ?? Number.POSITIVE_INFINITY;
     const bp = b.finishing_position ?? Number.POSITIVE_INFINITY;
     return ap - bp;
