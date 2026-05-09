@@ -100,7 +100,25 @@ export async function updateRecurrence(input: {
       start_timezone: parsed.data.startTimezone,
     })
     .eq("id", parsed.data.templateId);
-  if (error) return { status: "error", message: error.message };
+  if (error) {
+    // Translate the most common deploy-order foot-gun into something
+    // actionable. Postgres returns "column ... does not exist" when
+    // the migration hasn't been applied yet — without this hint the
+    // admin sees a raw PG error and can't tell the schema is the
+    // problem.
+    const msg = error.message;
+    if (
+      /column.*start_time.*does not exist/i.test(msg) ||
+      /column.*start_timezone.*does not exist/i.test(msg)
+    ) {
+      return {
+        status: "error",
+        message:
+          "Database is missing the start_time / start_timezone columns. Apply migration 0008 in the Supabase SQL editor, then try again.",
+      };
+    }
+    return { status: "error", message: msg };
+  }
 
   if (ruleChanged) {
     const { error: delErr } = await supabase
