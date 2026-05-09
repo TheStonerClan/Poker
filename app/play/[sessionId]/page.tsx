@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 
 import { PickName } from "@/components/player/PickName";
 import { slugifyPlayerName } from "@/lib/player/slug";
-import { createClient } from "@/lib/supabase/server";
+import { createServiceClient } from "@/lib/supabase/service";
 
 export const dynamic = "force-dynamic";
 
@@ -12,7 +12,15 @@ type PlayPageProps = {
 
 export default async function PlayEntryPage({ params }: PlayPageProps) {
   const { sessionId } = await params;
-  const supabase = await createClient();
+  // Service-role read: the player picker is a public-facing surface
+  // (anyone scanning the TV QR lands here), so it can't depend on the
+  // user holding an admin auth cookie. Without service role, the
+  // `players(name)` join is blocked by RLS for anon visitors and the
+  // picker shows an empty list — exactly what private-browsing users
+  // were hitting. The selected fields (id / name / busted-state /
+  // chips) are all already public via the TV display, so service role
+  // here doesn't expose anything new.
+  const supabase = createServiceClient();
 
   const { data: tournament, error: tErr } = await supabase
     .from("tournaments")
