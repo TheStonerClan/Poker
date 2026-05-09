@@ -315,7 +315,7 @@ export async function rebuyPlayer(input: {
     const { data: t } = await supabase
       .from("tournaments")
       .select(
-        "current_level, rebuy_chips_snapshot, buyback_config_snapshot",
+        "current_level, rebuy_chips_snapshot, buyback_config_snapshot, num_tables, max_seats_per_table, tables_config",
       )
       .eq("id", tp.tournament_id)
       .maybeSingle();
@@ -357,6 +357,63 @@ export async function rebuyPlayer(input: {
     const chips = cfg.rebuyChips ?? t?.rebuy_chips_snapshot ?? 0;
     const now = new Date().toISOString();
 
+    // Find a seat for the rebought player. bustPlayer nulled their
+    // seat_number to free the chair; rebuy needs to put them back at a
+    // table. Prefer their original table_number (still set on the row);
+    // fall back to whichever table has the most free seats if their
+    // original is now at capacity (e.g., a Balance moved someone else
+    // into their old slot).
+    const tables = resolveTablesConfig({
+      tablesConfig: t?.tables_config,
+      numTables: t?.num_tables ?? null,
+      maxSeatsPerTable: t?.max_seats_per_table ?? null,
+    });
+    let chosenTable: number | null = tp.table_number ?? null;
+    let chosenSeat: number | null = null;
+    if (tables.length > 0) {
+      const { data: occupants } = await supabase
+        .from("tournament_players")
+        .select("table_number, seat_number")
+        .eq("tournament_id", tp.tournament_id)
+        .not("seat_number", "is", null);
+      const occupied = new Map<number, Set<number>>();
+      for (const o of occupants ?? []) {
+        if (o.table_number != null && o.seat_number != null) {
+          if (!occupied.has(o.table_number)) {
+            occupied.set(o.table_number, new Set());
+          }
+          occupied.get(o.table_number)?.add(o.seat_number);
+        }
+      }
+      const findSeat = (tableNum: number): number | null => {
+        if (tableNum < 1 || tableNum > tables.length) return null;
+        const cap = tables[tableNum - 1].max_seats;
+        const used = occupied.get(tableNum) ?? new Set<number>();
+        for (let s = 1; s <= cap; s++) {
+          if (!used.has(s)) return s;
+        }
+        return null;
+      };
+      // Try original table first; on full, fall back to whichever table
+      // has any room (lowest table number breaks ties).
+      if (chosenTable != null) chosenSeat = findSeat(chosenTable);
+      if (chosenSeat == null) {
+        for (let i = 1; i <= tables.length; i++) {
+          const seat = findSeat(i);
+          if (seat != null) {
+            chosenTable = i;
+            chosenSeat = seat;
+            break;
+          }
+        }
+      }
+      if (chosenSeat == null) {
+        throw new Error(
+          "No free seat at any table for the rebuy. Bust someone or expand a table.",
+        );
+      }
+    }
+
     // Build the update payload conditionally so we don't try to write the
     // 0003 columns on a DB that doesn't have them.
     const update: TablesUpdate<"tournament_players"> = {
@@ -371,6 +428,10 @@ export async function rebuyPlayer(input: {
       finishing_position: null,
       current_chips: chips,
     };
+    if (chosenSeat != null) {
+      update.seat_number = chosenSeat;
+      if (chosenTable != null) update.table_number = chosenTable;
+    }
     if (typeof tp.rebuys_used === "number") {
       update.rebuys_used = rebuysUsed + 1;
     }
@@ -391,6 +452,8 @@ export async function rebuyPlayer(input: {
         chips,
         tokens_spent_after: tokensSpent + 1,
         tokens_per_player: tokensPerPlayer,
+        table_number: chosenTable,
+        seat_number: chosenSeat,
       },
     });
 
