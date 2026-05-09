@@ -125,13 +125,11 @@ export function PlayerGrid({
                       setError(null);
                       setPendingId(r.id);
                       start(async () => {
-                        try {
-                          await bustPlayer({ tournamentPlayerId: r.id });
-                        } catch (err) {
-                          setError((err as Error).message);
-                        } finally {
-                          setPendingId(null);
-                        }
+                        const res = await bustPlayer({
+                          tournamentPlayerId: r.id,
+                        });
+                        if (!res.ok) setError(res.error);
+                        setPendingId(null);
                       });
                     }}
                   />
@@ -146,13 +144,11 @@ export function PlayerGrid({
                       setError(null);
                       setPendingId(r.id);
                       start(async () => {
-                        try {
-                          await rebuyPlayer({ tournamentPlayerId: r.id });
-                        } catch (err) {
-                          setError((err as Error).message);
-                        } finally {
-                          setPendingId(null);
-                        }
+                        const res = await rebuyPlayer({
+                          tournamentPlayerId: r.id,
+                        });
+                        if (!res.ok) setError(res.error);
+                        setPendingId(null);
                       });
                     }}
                   />
@@ -166,13 +162,11 @@ export function PlayerGrid({
                       setError(null);
                       setPendingId(r.id);
                       start(async () => {
-                        try {
-                          await applyAddOn({ tournamentPlayerId: r.id });
-                        } catch (err) {
-                          setError((err as Error).message);
-                        } finally {
-                          setPendingId(null);
-                        }
+                        const res = await applyAddOn({
+                          tournamentPlayerId: r.id,
+                        });
+                        if (!res.ok) setError(res.error);
+                        setPendingId(null);
                       });
                     }}
                   />

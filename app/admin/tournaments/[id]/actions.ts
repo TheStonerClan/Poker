@@ -169,243 +169,317 @@ const BustSchema = z.object({
   tournamentPlayerId: z.uuid(),
 });
 
-export async function bustPlayer(input: { tournamentPlayerId: string }) {
-  await requireAdmin();
-  const { tournamentPlayerId } = BustSchema.parse(input);
-  const supabase = await createClient();
+export async function bustPlayer(input: {
+  tournamentPlayerId: string;
+}): Promise<AdminActionResult> {
+  return runAdminAction(async () => {
+    await requireAdmin();
+    const { tournamentPlayerId } = BustSchema.parse(input);
+    const supabase = await createClient();
 
-  const { data: tp } = await supabase
-    .from("tournament_players")
-    .select("tournament_id, player_id, busted_at_time")
-    .eq("id", tournamentPlayerId)
-    .maybeSingle();
-  if (!tp) throw new Error("Player slot not found");
-  if (tp.busted_at_time) return;
-
-  const { data: t } = await supabase
-    .from("tournaments")
-    .select("current_level")
-    .eq("id", tp.tournament_id)
-    .maybeSingle();
-
-  // Compute the player's finishing position. The 1st-to-bust in a 10-player
-  // field finishes 10th, the 2nd-to-bust finishes 9th, … last-to-bust
-  // finishes 2nd, the survivor is 1st. So the busted player's position is
-  // the count of currently-active players (including this one, before we
-  // mark them out).
-  const { data: roster } = await supabase
-    .from("tournament_players")
-    .select("id, busted_at_time")
-    .eq("tournament_id", tp.tournament_id);
-
-  const activeBeforeBust = (roster ?? []).filter(
-    (r) => r.id === tournamentPlayerId || !r.busted_at_time,
-  ).length;
-  const finishingPosition = activeBeforeBust;
-
-  const now = new Date().toISOString();
-  const { error } = await supabase
-    .from("tournament_players")
-    .update({
-      busted_at_level: t?.current_level ?? null,
-      busted_at_time: now,
-      current_chips: 0,
-      finishing_position: finishingPosition,
-    })
-    .eq("id", tournamentPlayerId);
-  if (error) throw new Error(error.message);
-
-  await supabase.from("tournament_events").insert({
-    tournament_id: tp.tournament_id,
-    type: "bust",
-    payload: {
-      tournament_player_id: tournamentPlayerId,
-      player_id: tp.player_id,
-      at_level: t?.current_level ?? null,
-      finishing_position: finishingPosition,
-    },
-  });
-
-  // Auto-finalize when only one player remains. Set the survivor's
-  // finishing_position=1 and run the same finalize logic the manual button
-  // would, except we redirect to the live page (recap) instead of the
-  // dashboard so the admin sees the result without an extra click.
-  const survivors = (roster ?? []).filter(
-    (r) => r.id !== tournamentPlayerId && !r.busted_at_time,
-  );
-  if (survivors.length === 1) {
-    const winnerId = survivors[0].id;
-    await supabase
+    const { data: tp } = await supabase
       .from("tournament_players")
-      .update({ finishing_position: 1 })
-      .eq("id", winnerId);
+      .select("tournament_id, player_id, busted_at_time")
+      .eq("id", tournamentPlayerId)
+      .maybeSingle();
+    if (!tp) throw new Error("Player slot not found");
+    if (tp.busted_at_time) return;
 
-    await performFinalize(supabase, tp.tournament_id, {
-      chopTopTwo: false,
-      autoFromLastBust: true,
+    const { data: t } = await supabase
+      .from("tournaments")
+      .select("current_level")
+      .eq("id", tp.tournament_id)
+      .maybeSingle();
+
+    // Compute the player's finishing position. The 1st-to-bust in a 10-player
+    // field finishes 10th, the 2nd-to-bust finishes 9th, … last-to-bust
+    // finishes 2nd, the survivor is 1st. So the busted player's position is
+    // the count of currently-active players (including this one, before we
+    // mark them out).
+    const { data: roster } = await supabase
+      .from("tournament_players")
+      .select("id, busted_at_time")
+      .eq("tournament_id", tp.tournament_id);
+
+    const activeBeforeBust = (roster ?? []).filter(
+      (r) => r.id === tournamentPlayerId || !r.busted_at_time,
+    ).length;
+    const finishingPosition = activeBeforeBust;
+
+    const now = new Date().toISOString();
+    const { error } = await supabase
+      .from("tournament_players")
+      .update({
+        busted_at_level: t?.current_level ?? null,
+        busted_at_time: now,
+        current_chips: 0,
+        finishing_position: finishingPosition,
+      })
+      .eq("id", tournamentPlayerId);
+    if (error) throw new Error(error.message);
+
+    await supabase.from("tournament_events").insert({
+      tournament_id: tp.tournament_id,
+      type: "bust",
+      payload: {
+        tournament_player_id: tournamentPlayerId,
+        player_id: tp.player_id,
+        at_level: t?.current_level ?? null,
+        finishing_position: finishingPosition,
+      },
     });
 
-    revalidatePath("/admin");
-    revalidatePath(`/admin/tournaments/${tp.tournament_id}`);
-    revalidatePath("/tv");
-    return;
-  }
+    // Auto-finalize when only one player remains. Set the survivor's
+    // finishing_position=1 and run the same finalize logic the manual button
+    // would, except we redirect to the live page (recap) instead of the
+    // dashboard so the admin sees the result without an extra click.
+    const survivors = (roster ?? []).filter(
+      (r) => r.id !== tournamentPlayerId && !r.busted_at_time,
+    );
+    if (survivors.length === 1) {
+      const winnerId = survivors[0].id;
+      await supabase
+        .from("tournament_players")
+        .update({ finishing_position: 1 })
+        .eq("id", winnerId);
 
-  await refresh(tp.tournament_id);
+      await performFinalize(supabase, tp.tournament_id, {
+        chopTopTwo: false,
+        autoFromLastBust: true,
+      });
+
+      revalidatePath("/admin");
+      revalidatePath(`/admin/tournaments/${tp.tournament_id}`);
+      revalidatePath("/tv");
+      return;
+    }
+
+    await refresh(tp.tournament_id);
+  });
 }
 
-export async function rebuyPlayer(input: { tournamentPlayerId: string }) {
-  await requireAdmin();
-  const { tournamentPlayerId } = BustSchema.parse(input);
-  const supabase = await createClient();
+export type AdminActionResult = { ok: true } | { ok: false; error: string };
 
-  const { data: tp } = await supabase
-    .from("tournament_players")
-    .select(
-      "tournament_id, player_id, busted_at_time, current_chips, rebuys_used, addons_used",
-    )
-    .eq("id", tournamentPlayerId)
-    .maybeSingle();
-  if (!tp) throw new Error("Player slot not found");
-
-  const { data: t } = await supabase
-    .from("tournaments")
-    .select(
-      "current_level, rebuy_chips_snapshot, buyback_config_snapshot",
-    )
-    .eq("id", tp.tournament_id)
-    .maybeSingle();
-
-  const cfg = (t?.buyback_config_snapshot ?? {}) as {
-    rebuyAllowedThroughLevel?: number;
-    rebuyChips?: number;
-    tokensPerPlayer?: number;
-  };
-
-  // Token limit: rebuys + addons combined cannot exceed tokensPerPlayer.
-  // Default 1 if unset; the admin can raise it on the template/tournament.
-  const tokensPerPlayer = Math.max(1, cfg.tokensPerPlayer ?? 1);
-  const tokensSpent = (tp.rebuys_used ?? 0) + (tp.addons_used ?? 0);
-  if (tokensSpent >= tokensPerPlayer) {
-    throw new Error(
-      `Buyback limit reached (${tokensSpent} of ${tokensPerPlayer} used).`,
-    );
+/**
+ * Wrap a Supabase server-action body so that any thrown error surfaces as a
+ * client-readable `{ ok: false, error }` instead of a Next 16 redacted
+ * server error. Production builds strip thrown error messages "to avoid
+ * leaking sensitive details", which makes diagnosing breakage on the
+ * preview/prod deployments very painful — anything we WANT visible has to
+ * come back as part of the action's return value.
+ */
+async function runAdminAction(
+  fn: () => Promise<void>,
+): Promise<AdminActionResult> {
+  try {
+    await fn();
+    return { ok: true };
+  } catch (err) {
+    const message =
+      err instanceof Error
+        ? err.message
+        : typeof err === "string"
+          ? err
+          : "Unknown server error";
+    return { ok: false, error: message };
   }
+}
 
-  const cap = cfg.rebuyAllowedThroughLevel ?? Number.POSITIVE_INFINITY;
-  if (t && t.current_level > cap) {
-    throw new Error(`Rebuy window closed (allowed through level ${cap}).`);
-  }
+export async function rebuyPlayer(input: {
+  tournamentPlayerId: string;
+}): Promise<AdminActionResult> {
+  return runAdminAction(async () => {
+    await requireAdmin();
+    const { tournamentPlayerId } = BustSchema.parse(input);
+    const supabase = await createClient();
 
-  const chips = cfg.rebuyChips ?? t?.rebuy_chips_snapshot ?? 0;
-  const now = new Date().toISOString();
+    // Use SELECT * so a DB that hasn't run migration 0003 (which adds
+    // rebuys_used / addons_used) still returns whatever columns DO exist.
+    // We read the new counters defensively below.
+    const { data: tp } = await supabase
+      .from("tournament_players")
+      .select("*")
+      .eq("id", tournamentPlayerId)
+      .maybeSingle();
+    if (!tp) throw new Error("Player slot not found");
 
-  const { error } = await supabase
-    .from("tournament_players")
-    .update({
+    const { data: t } = await supabase
+      .from("tournaments")
+      .select(
+        "current_level, rebuy_chips_snapshot, buyback_config_snapshot",
+      )
+      .eq("id", tp.tournament_id)
+      .maybeSingle();
+
+    const cfg = (t?.buyback_config_snapshot ?? {}) as {
+      rebuyAllowedThroughLevel?: number;
+      rebuyChips?: number;
+      tokensPerPlayer?: number;
+    };
+
+    // Token limit: rebuys + addons combined cannot exceed tokensPerPlayer.
+    // Default 1 (the legacy single-token rule). When the new counters
+    // aren't present (DB without 0003), fall back to the boolean flag.
+    const tokensPerPlayer = Math.max(1, cfg.tokensPerPlayer ?? 1);
+    const rebuysUsed =
+      typeof tp.rebuys_used === "number"
+        ? tp.rebuys_used
+        : tp.buyback_used && tp.buyback_used_as === "rebuy"
+          ? 1
+          : 0;
+    const addonsUsed =
+      typeof tp.addons_used === "number"
+        ? tp.addons_used
+        : tp.buyback_used && tp.buyback_used_as === "addon"
+          ? 1
+          : 0;
+    const tokensSpent = rebuysUsed + addonsUsed;
+    if (tokensSpent >= tokensPerPlayer) {
+      throw new Error(
+        `Buyback limit reached (${tokensSpent} of ${tokensPerPlayer} used).`,
+      );
+    }
+
+    const cap = cfg.rebuyAllowedThroughLevel ?? Number.POSITIVE_INFINITY;
+    if (t && t.current_level > cap) {
+      throw new Error(`Rebuy window closed (allowed through level ${cap}).`);
+    }
+
+    const chips = cfg.rebuyChips ?? t?.rebuy_chips_snapshot ?? 0;
+    const now = new Date().toISOString();
+
+    // Build the update payload conditionally so we don't try to write the
+    // 0003 columns on a DB that doesn't have them.
+    const update: TablesUpdate<"tournament_players"> = {
       buyback_used: true,
       buyback_used_as: "rebuy",
       buyback_used_at_level: t?.current_level ?? null,
       buyback_used_at_time: now,
-      rebuys_used: (tp.rebuys_used ?? 0) + 1,
       busted_at_level: null,
       busted_at_time: null,
-      // The player is back in play; their previous finishing_position
-      // (assigned when they busted) no longer applies. Leaving it set
-      // would also conflict with the unique-position index when another
-      // player later busts into that slot.
+      // Player is back in play; clear their bust-time finishing_position
+      // so the unique index doesn't reject the next bust.
       finishing_position: null,
       current_chips: chips,
-    })
-    .eq("id", tournamentPlayerId);
-  if (error) throw new Error(error.message);
+    };
+    if (typeof tp.rebuys_used === "number") {
+      update.rebuys_used = rebuysUsed + 1;
+    }
 
-  await supabase.from("tournament_events").insert({
-    tournament_id: tp.tournament_id,
-    type: "rebuy",
-    payload: {
-      tournament_player_id: tournamentPlayerId,
-      player_id: tp.player_id,
-      at_level: t?.current_level ?? null,
-      chips,
-      tokens_spent_after: tokensSpent + 1,
-      tokens_per_player: tokensPerPlayer,
-    },
+    const { error } = await supabase
+      .from("tournament_players")
+      .update(update)
+      .eq("id", tournamentPlayerId);
+    if (error) throw new Error(error.message);
+
+    await supabase.from("tournament_events").insert({
+      tournament_id: tp.tournament_id,
+      type: "rebuy",
+      payload: {
+        tournament_player_id: tournamentPlayerId,
+        player_id: tp.player_id,
+        at_level: t?.current_level ?? null,
+        chips,
+        tokens_spent_after: tokensSpent + 1,
+        tokens_per_player: tokensPerPlayer,
+      },
+    });
+
+    await refresh(tp.tournament_id);
   });
-
-  await refresh(tp.tournament_id);
 }
 
-export async function applyAddOn(input: { tournamentPlayerId: string }) {
-  await requireAdmin();
-  const { tournamentPlayerId } = BustSchema.parse(input);
-  const supabase = await createClient();
+export async function applyAddOn(input: {
+  tournamentPlayerId: string;
+}): Promise<AdminActionResult> {
+  return runAdminAction(async () => {
+    await requireAdmin();
+    const { tournamentPlayerId } = BustSchema.parse(input);
+    const supabase = await createClient();
 
-  const { data: tp } = await supabase
-    .from("tournament_players")
-    .select(
-      "tournament_id, player_id, current_chips, rebuys_used, addons_used",
-    )
-    .eq("id", tournamentPlayerId)
-    .maybeSingle();
-  if (!tp) throw new Error("Player slot not found");
+    const { data: tp } = await supabase
+      .from("tournament_players")
+      .select("*")
+      .eq("id", tournamentPlayerId)
+      .maybeSingle();
+    if (!tp) throw new Error("Player slot not found");
 
-  const { data: t } = await supabase
-    .from("tournaments")
-    .select("current_level, buyback_config_snapshot")
-    .eq("id", tp.tournament_id)
-    .maybeSingle();
+    const { data: t } = await supabase
+      .from("tournaments")
+      .select("current_level, buyback_config_snapshot")
+      .eq("id", tp.tournament_id)
+      .maybeSingle();
 
-  const cfg = (t?.buyback_config_snapshot ?? {}) as {
-    addOnAtBreakLevel?: number;
-    addOnChips?: number;
-    tokensPerPlayer?: number;
-  };
+    const cfg = (t?.buyback_config_snapshot ?? {}) as {
+      addOnAtBreakLevel?: number;
+      addOnChips?: number;
+      tokensPerPlayer?: number;
+    };
 
-  // Same token-limit check as rebuy: addons share the buyback budget.
-  const tokensPerPlayer = Math.max(1, cfg.tokensPerPlayer ?? 1);
-  const tokensSpent = (tp.rebuys_used ?? 0) + (tp.addons_used ?? 0);
-  if (tokensSpent >= tokensPerPlayer) {
-    throw new Error(
-      `Buyback limit reached (${tokensSpent} of ${tokensPerPlayer} used).`,
-    );
-  }
-  if (t && cfg.addOnAtBreakLevel && t.current_level !== cfg.addOnAtBreakLevel) {
-    throw new Error(
-      `Add-on only available at break level ${cfg.addOnAtBreakLevel}.`,
-    );
-  }
+    const tokensPerPlayer = Math.max(1, cfg.tokensPerPlayer ?? 1);
+    const rebuysUsed =
+      typeof tp.rebuys_used === "number"
+        ? tp.rebuys_used
+        : tp.buyback_used && tp.buyback_used_as === "rebuy"
+          ? 1
+          : 0;
+    const addonsUsed =
+      typeof tp.addons_used === "number"
+        ? tp.addons_used
+        : tp.buyback_used && tp.buyback_used_as === "addon"
+          ? 1
+          : 0;
+    const tokensSpent = rebuysUsed + addonsUsed;
+    if (tokensSpent >= tokensPerPlayer) {
+      throw new Error(
+        `Buyback limit reached (${tokensSpent} of ${tokensPerPlayer} used).`,
+      );
+    }
+    if (
+      t &&
+      cfg.addOnAtBreakLevel &&
+      t.current_level !== cfg.addOnAtBreakLevel
+    ) {
+      throw new Error(
+        `Add-on only available at break level ${cfg.addOnAtBreakLevel}.`,
+      );
+    }
 
-  const addChips = cfg.addOnChips ?? 0;
-  const now = new Date().toISOString();
+    const addChips = cfg.addOnChips ?? 0;
+    const now = new Date().toISOString();
 
-  const { error } = await supabase
-    .from("tournament_players")
-    .update({
+    const update: TablesUpdate<"tournament_players"> = {
       buyback_used: true,
       buyback_used_as: "addon",
       buyback_used_at_level: t?.current_level ?? null,
       buyback_used_at_time: now,
-      addons_used: (tp.addons_used ?? 0) + 1,
       current_chips: (tp.current_chips ?? 0) + addChips,
-    })
-    .eq("id", tournamentPlayerId);
-  if (error) throw new Error(error.message);
+    };
+    if (typeof tp.addons_used === "number") {
+      update.addons_used = addonsUsed + 1;
+    }
 
-  await supabase.from("tournament_events").insert({
-    tournament_id: tp.tournament_id,
-    type: "addon",
-    payload: {
-      tournament_player_id: tournamentPlayerId,
-      player_id: tp.player_id,
-      at_level: t?.current_level ?? null,
-      chips_added: addChips,
-      tokens_spent_after: tokensSpent + 1,
-      tokens_per_player: tokensPerPlayer,
-    },
+    const { error } = await supabase
+      .from("tournament_players")
+      .update(update)
+      .eq("id", tournamentPlayerId);
+    if (error) throw new Error(error.message);
+
+    await supabase.from("tournament_events").insert({
+      tournament_id: tp.tournament_id,
+      type: "addon",
+      payload: {
+        tournament_player_id: tournamentPlayerId,
+        player_id: tp.player_id,
+        at_level: t?.current_level ?? null,
+        chips_added: addChips,
+        tokens_spent_after: tokensSpent + 1,
+        tokens_per_player: tokensPerPlayer,
+      },
+    });
+
+    await refresh(tp.tournament_id);
   });
-
-  await refresh(tp.tournament_id);
 }
 
 const ColorUpDecisionSchema = z.object({

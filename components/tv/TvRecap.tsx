@@ -1,3 +1,4 @@
+import LocalDateTime from "@/components/admin/LocalDateTime";
 import TvAutoRefresh from "@/components/tv/TvAutoRefresh";
 import {
   biggestChipSwings,
@@ -79,10 +80,6 @@ export default function TvRecap({
     return ordinal(position);
   };
 
-  const finishedAt = tournament.finished_at
-    ? new Date(tournament.finished_at)
-    : null;
-
   return (
     <div className="min-h-screen bg-bg text-fg flex flex-col px-[clamp(1rem,3vw,3rem)] py-[clamp(1rem,2vh,2.5rem)]">
       {/* Reload every minute so /tv flips back to the live display the
@@ -96,15 +93,18 @@ export default function TvRecap({
         <h1 className="font-mono text-fg text-[clamp(2.5rem,7vw,5rem)] tabular-nums">
           {chopActive ? "Chopped" : "Final results"}
         </h1>
-        {finishedAt ? (
+        {tournament.finished_at ? (
           <p className="text-fg/60 text-[clamp(0.75rem,1vw,1rem)]">
-            {finishedAt.toLocaleString(undefined, {
-              weekday: "long",
-              month: "short",
-              day: "numeric",
-              hour: "numeric",
-              minute: "2-digit",
-            })}
+            <LocalDateTime
+              iso={tournament.finished_at}
+              options={{
+                weekday: "long",
+                month: "short",
+                day: "numeric",
+                hour: "numeric",
+                minute: "2-digit",
+              }}
+            />
           </p>
         ) : null}
       </header>
