@@ -15,13 +15,22 @@ type Props = {
  * for single-table tournaments where the tournament-wide stats already
  * cover everything. Each card uses the table's configured color so
  * players can spot their own table at a glance.
+ *
+ * Tables with zero active players are dropped — once everyone at a
+ * table has busted out, or after a Merge consolidates them onto a
+ * different table, the empty card stops cluttering the strip.
  */
 export default function TableLeaders({ stats, bigBlind }: Props) {
-  if (stats.length <= 1) return null;
+  // Filter out tables with no active players. Two cases produce these:
+  // (a) every active player at that table has busted out, and (b) Merge
+  // moved them to another table. Either way the card carries no useful
+  // current-state info and just makes the strip noisier.
+  const active = stats.filter((s) => s.activePlayers > 0);
+  if (active.length <= 1) return null;
 
   return (
     <div className="grid grid-cols-2 lg:grid-cols-4 gap-[clamp(0.5rem,1vw,1rem)]">
-      {stats.map((s) => {
+      {active.map((s) => {
         const css = TABLE_COLOR_CSS[s.color];
         const bbCount =
           bigBlind && bigBlind > 0 && s.averageChips > 0
