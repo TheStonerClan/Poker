@@ -11,6 +11,12 @@
 
 export type FinishedTournament = {
   id: string;
+  /**
+   * Owning template id, or null if the tournament was created without one
+   * (rare but possible — old data, ad-hoc tournaments). Used by the
+   * history dashboard to filter / group by league.
+   */
+  template_id: string | null;
   finished_at: string | null;
   started_at: string | null;
   buy_in_snapshot: number;

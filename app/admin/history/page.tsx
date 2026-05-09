@@ -15,6 +15,7 @@ import {
   type PayoutRow,
   type RosterRow,
 } from "@/lib/admin/history-stats";
+import { getTemplates } from "@/lib/admin/queries";
 import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -24,30 +25,64 @@ export const dynamic = "force-dynamic";
 // can either bump this or move the math to a SQL view.
 const TOURNAMENT_LIMIT = 40;
 
-export default async function HistoryPage() {
+const ALL_TEMPLATES = "__all__";
+
+type SearchParams = { template?: string };
+
+export default async function HistoryPage({
+  searchParams,
+}: {
+  searchParams: Promise<SearchParams>;
+}) {
   await requireAdmin();
   const supabase = await createClient();
+  const { template: templateFilter } = await searchParams;
+  const allTemplates = await getTemplates();
 
-  // 1. Fetch the finished-tournament window.
-  const { data: tournamentsData } = await supabase
+  // 1. Fetch the finished-tournament window. When a template filter is
+  //    set, scope to that league so the leaderboard and histogram are
+  //    "averaged through multiple tournaments within the same recurring
+  //    schedule" — see /admin/templates for which templates exist.
+  let tournamentsQuery = supabase
     .from("tournaments")
     .select(
-      "id, status, finished_at, started_at, buy_in_snapshot, current_level",
+      "id, template_id, status, finished_at, started_at, buy_in_snapshot, current_level",
     )
     .eq("status", "finished")
     .order("finished_at", { ascending: false })
     .limit(TOURNAMENT_LIMIT);
 
+  if (templateFilter && templateFilter !== ALL_TEMPLATES) {
+    tournamentsQuery = tournamentsQuery.eq("template_id", templateFilter);
+  }
+  const { data: tournamentsData } = await tournamentsQuery;
+
   const tournaments = (tournamentsData ?? []) as FinishedTournament[];
+  const activeFilterId =
+    templateFilter && templateFilter !== ALL_TEMPLATES
+      ? templateFilter
+      : null;
+  const activeFilterName = activeFilterId
+    ? (allTemplates.find((t) => t.id === activeFilterId)?.name ?? "—")
+    : "All templates";
 
   if (tournaments.length === 0) {
     return (
       <>
-        <TopBar title="History" subtitle="0 finished" />
+        <TopBar
+          title="History"
+          subtitle={`0 finished · ${activeFilterName}`}
+        />
         <main className="flex flex-1 flex-col gap-3 px-4 py-4">
+          <TemplateFilter
+            activeId={activeFilterId}
+            templates={allTemplates}
+          />
           <div className="rounded-md border border-dashed border-fg/15 p-6 text-center text-sm text-fg/60">
-            No completed tournaments yet. Finish one to see the leaderboard
-            and bust histogram populate.
+            No completed tournaments {activeFilterId ? "for this template" : "yet"}.
+            {activeFilterId
+              ? " Switch templates above or play one through to seed the analytics."
+              : " Finish one to see the leaderboard and bust histogram populate."}
           </div>
         </main>
       </>
@@ -112,9 +147,11 @@ export default async function HistoryPage() {
     <>
       <TopBar
         title="History"
-        subtitle={`${tournaments.length} finished · ${leaderboard.length} player${leaderboard.length === 1 ? "" : "s"}`}
+        subtitle={`${activeFilterName} · ${tournaments.length} finished · ${leaderboard.length} player${leaderboard.length === 1 ? "" : "s"}`}
       />
       <main className="flex flex-1 flex-col gap-5 px-4 py-4">
+        <TemplateFilter activeId={activeFilterId} templates={allTemplates} />
+
         {/* Headline stats */}
         <section className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           <Headline label="Tournaments" value={tournaments.length.toString()} />
@@ -249,5 +286,68 @@ function Headline({ label, value }: { label: string; value: string }) {
       </p>
       <p className="mt-1 font-mono text-2xl tabular-nums text-fg">{value}</p>
     </div>
+  );
+}
+
+/**
+ * Server-component template-scope picker. Each template gets its own pill
+ * link; clicking sets the `?template=<id>` query param, which the page
+ * reads on next render to scope all queries + aggregations to that
+ * template only. Plain links (no JS) keep this a fully server-rendered
+ * filter so the page can stay a server component.
+ */
+function TemplateFilter({
+  activeId,
+  templates,
+}: {
+  activeId: string | null;
+  templates: Array<{ id: string; name: string }>;
+}) {
+  if (templates.length <= 1) {
+    // With a single template (or none), the filter would be a no-op —
+    // hide it instead of cluttering the UI.
+    return null;
+  }
+  return (
+    <nav
+      aria-label="Filter history by template"
+      className="flex flex-wrap gap-2"
+    >
+      <FilterPill
+        href="/admin/history"
+        label="All templates"
+        active={activeId === null}
+      />
+      {templates.map((t) => (
+        <FilterPill
+          key={t.id}
+          href={`/admin/history?template=${t.id}`}
+          label={t.name}
+          active={activeId === t.id}
+        />
+      ))}
+    </nav>
+  );
+}
+
+function FilterPill({
+  href,
+  label,
+  active,
+}: {
+  href: string;
+  label: string;
+  active: boolean;
+}) {
+  const cls = active
+    ? "border-gold bg-gold/15 text-gold"
+    : "border-fg/15 text-fg/70 hover:border-gold/40 hover:text-fg";
+  return (
+    <Link
+      href={href}
+      className={`rounded-full border px-3 py-1.5 text-xs font-semibold uppercase tracking-wider ${cls}`}
+    >
+      {label}
+    </Link>
   );
 }
