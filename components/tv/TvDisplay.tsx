@@ -1,7 +1,9 @@
 "use client";
 
 import { QRCodeSVG } from "qrcode.react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+
+import { formatBlinds } from "@/lib/tv/format";
 
 import BlindLevel from "@/components/tv/BlindLevel";
 import BottomBanner from "@/components/tv/BottomBanner";
@@ -118,6 +120,84 @@ export default function TvDisplay({
     levelPausedAt: tournament.level_paused_at,
     accumulatedPauseMs: tournament.accumulated_pause_ms ?? 0,
   });
+
+  // Auto-advance: when the clock hits zero on a *playing* level while
+  // the tournament is running (not paused), POST to the auto-advance
+  // endpoint. Breaks are deliberately admin-paced — the operator
+  // decides when players are settled — so the effect is gated on
+  // `!isPlayingLevelExpired` for breaks. The endpoint is server-
+  // validated (re-checks elapsed time + status + the not-a-break rule)
+  // so a stale TV can't force an early advance.
+  //
+  // The ref is keyed on (level_num, level_started_at) so a revert to
+  // the same level number (admin "Back" then forward again) gets a
+  // fresh chance to fire. Keying just on level_num would mean: the
+  // admin clicks Back, the TV's local clock spins back up, the admin
+  // does nothing, the level expires — and we'd skip the auto-advance
+  // because the ref still says "we already fired for level N".
+  const autoAdvanceRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (
+      !currentLevel ||
+      currentLevel.is_break ||
+      tournament.status !== "running" ||
+      clock.isPaused ||
+      clock.remainingSec > 0 ||
+      durationSec <= 0
+    ) {
+      return;
+    }
+    const key = `${currentLevel.level_num}:${tournament.level_started_at ?? ""}`;
+    if (autoAdvanceRef.current === key) return;
+    autoAdvanceRef.current = key;
+
+    fetch(`/api/tv/${tournamentId}/auto-advance`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ expectedLevel: currentLevel.level_num }),
+      cache: "no-store",
+    }).catch(() => {
+      // Network blip: drift sync will retry. Reset the ref so the next
+      // tick can attempt again rather than staying stuck.
+      autoAdvanceRef.current = null;
+    });
+  }, [
+    tournamentId,
+    tournament.status,
+    tournament.level_started_at,
+    currentLevel,
+    clock.remainingSec,
+    clock.isPaused,
+    durationSec,
+  ]);
+
+  // Blinds-up flash overlay. When the current level changes to a new
+  // *playing* level, surface the new blinds front-and-center for a few
+  // seconds so the room can't miss the transition. Skips: initial
+  // mount (prevLevel starts at the current level), transitions INTO a
+  // break (BreakPanel's already taking over the middle of the screen),
+  // and cases where the level data isn't loaded yet.
+  //
+  // Implemented with the React-recommended "adjust state on prop change"
+  // pattern (https://react.dev/learn/you-might-not-need-an-effect):
+  // compare-and-set during render so we don't trip the
+  // react-hooks/set-state-in-effect rule. The clear timeout lives in
+  // an effect since `setTimeout` is an external system.
+  const [prevLevelNum, setPrevLevelNum] = useState(tournament.current_level);
+  const [flashLevel, setFlashLevel] = useState<typeof currentLevel>(null);
+  if (prevLevelNum !== tournament.current_level) {
+    setPrevLevelNum(tournament.current_level);
+    if (currentLevel && !currentLevel.is_break) {
+      setFlashLevel(currentLevel);
+    } else {
+      setFlashLevel(null);
+    }
+  }
+  useEffect(() => {
+    if (!flashLevel) return;
+    const t = window.setTimeout(() => setFlashLevel(null), 4500);
+    return () => window.clearTimeout(t);
+  }, [flashLevel]);
 
   const buyback = (tournament.buyback_config_snapshot ?? {}) as BuybackConfig;
   const buybackPrice = buyback.price ?? tournament.rebuy_price_snapshot ?? 0;
@@ -326,6 +406,32 @@ export default function TvDisplay({
           <NextLevel next={nextPlayingLevel} />
         </div>
       </footer>
+
+      {/* Blinds-up flash. Full-screen overlay shown for ~4.5s whenever
+          the level changes to a new playing level. Pointer-events-none
+          so it never blocks an admin operating the screen via remote. */}
+      {flashLevel ? (
+        <div
+          key={flashLevel.level_num}
+          aria-live="polite"
+          className="tv-blinds-flash pointer-events-none fixed inset-0 z-50 flex flex-col items-center justify-center bg-bg/85 backdrop-blur-sm"
+        >
+          <span className="text-label uppercase tracking-[0.5em] text-[clamp(0.85rem,1.6vw,1.4rem)] text-gold-bright">
+            Blinds up
+          </span>
+          <span className="mt-[clamp(0.5rem,1vh,1rem)] text-fg/70 uppercase tracking-[0.4em] text-[clamp(0.95rem,1.8vw,1.6rem)]">
+            Level {flashLevel.level_num}
+          </span>
+          <span className="mt-[clamp(0.75rem,2vh,2rem)] font-mono text-fg leading-none tabular-nums text-[clamp(3.5rem,14vmin,9rem)]">
+            {formatBlinds(flashLevel.small, flashLevel.big, flashLevel.ante)}
+          </span>
+          {flashLevel.ante ? (
+            <span className="mt-[clamp(0.25rem,0.75vh,0.75rem)] text-label uppercase tracking-[0.3em] text-[clamp(0.7rem,1.1vw,1rem)]">
+              Ante {flashLevel.ante}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

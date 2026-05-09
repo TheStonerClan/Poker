@@ -55,3 +55,21 @@ body {
   font-family: var(--font-inter), ui-sans-serif, system-ui, -apple-system, sans-serif;
   font-feature-settings: "ss01", "cv11";
 }
+
+/*
+ * Blinds-up flash on the TV. Triggered whenever the current playing
+ * level changes (auto-advance OR admin click). Fades in fast, holds for
+ * ~3s while the dealer announces, then fades out. Total ~4.5s — matches
+ * the JS timeout in TvDisplay that unmounts the overlay.
+ */
+@keyframes tv-blinds-flash-in {
+  0% { opacity: 0; transform: scale(0.94); }
+  10% { opacity: 1; transform: scale(1.02); }
+  18% { opacity: 1; transform: scale(1); }
+  82% { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1.04); }
+}
+
+.tv-blinds-flash {
+  animation: tv-blinds-flash-in 4.5s ease-out forwards;
+}
