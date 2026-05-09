@@ -4,7 +4,14 @@ import { useEffect, useMemo, useState, useTransition } from "react";
 
 import type { Player, TournamentTemplate } from "@/lib/admin/queries";
 import { formatChips, formatMoney } from "@/lib/admin/format";
-import { suggestTableSplit } from "@/lib/admin/tables";
+import {
+  defaultTableEntry,
+  suggestTableSplit,
+  TABLE_COLOR_CSS,
+  TABLE_COLORS,
+  type TableColor,
+  type TableConfig,
+} from "@/lib/admin/tables";
 
 import { startTournament } from "./actions";
 
@@ -20,8 +27,7 @@ export function NewTournamentWizard({
   const [step, setStep] = useState<Step>("template");
   const [templateId, setTemplateId] = useState<string>(templates[0]?.id ?? "");
   const [picked, setPicked] = useState<Set<string>>(new Set());
-  const [numTables, setNumTables] = useState<number>(1);
-  const [maxSeats, setMaxSeats] = useState<number>(9);
+  const [tables, setTables] = useState<TableConfig[]>([defaultTableEntry(1, 9)]);
   const [tablesTouched, setTablesTouched] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
@@ -32,14 +38,34 @@ export function NewTournamentWizard({
   );
 
   // Suggest sensible table defaults based on the picked-player count, but
-  // only until the admin manually adjusts. Once they touch either field,
-  // stop overriding so we don't fight the user's input.
+  // only until the admin manually adjusts. Once they touch the table list
+  // (rename, recolor, add/remove, change a cap) we stop overriding.
   useEffect(() => {
     if (tablesTouched) return;
     const suggestion = suggestTableSplit(picked.size);
-    setNumTables(suggestion.numTables);
-    setMaxSeats(suggestion.maxSeatsPerTable);
+    setTables(
+      Array.from({ length: suggestion.numTables }, (_, i) =>
+        defaultTableEntry(i + 1, suggestion.maxSeatsPerTable),
+      ),
+    );
   }, [picked.size, tablesTouched]);
+
+  function patchTable(idx: number, patch: Partial<TableConfig>) {
+    setTablesTouched(true);
+    setTables((prev) =>
+      prev.map((t, i) => (i === idx ? { ...t, ...patch } : t)),
+    );
+  }
+
+  function addTable() {
+    setTablesTouched(true);
+    setTables((prev) => [...prev, defaultTableEntry(prev.length + 1, 9)]);
+  }
+
+  function removeTable(idx: number) {
+    setTablesTouched(true);
+    setTables((prev) => prev.filter((_, i) => i !== idx));
+  }
 
   return (
     <div className="flex flex-1 flex-col gap-4">
@@ -82,16 +108,10 @@ export function NewTournamentWizard({
       {step === "tables" && template ? (
         <TablesStep
           playerCount={picked.size}
-          numTables={numTables}
-          maxSeats={maxSeats}
-          onChangeNumTables={(n) => {
-            setTablesTouched(true);
-            setNumTables(n);
-          }}
-          onChangeMaxSeats={(n) => {
-            setTablesTouched(true);
-            setMaxSeats(n);
-          }}
+          tables={tables}
+          onPatch={patchTable}
+          onAdd={addTable}
+          onRemove={removeTable}
           onBack={() => setStep("players")}
           error={error}
           pending={pending}
@@ -101,8 +121,7 @@ export function NewTournamentWizard({
               const res = await startTournament({
                 templateId: template.id,
                 playerIds: [...picked],
-                numTables,
-                maxSeatsPerTable: maxSeats,
+                tables,
               });
               if (res.status === "error") setError(res.message ?? "Could not start.");
             });
@@ -360,66 +379,107 @@ function PlayersStep({
 
 function TablesStep({
   playerCount,
-  numTables,
-  maxSeats,
-  onChangeNumTables,
-  onChangeMaxSeats,
+  tables,
+  onPatch,
+  onAdd,
+  onRemove,
   onBack,
   onStart,
   pending,
   error,
 }: {
   playerCount: number;
-  numTables: number;
-  maxSeats: number;
-  onChangeNumTables: (n: number) => void;
-  onChangeMaxSeats: (n: number) => void;
+  tables: TableConfig[];
+  onPatch: (idx: number, patch: Partial<TableConfig>) => void;
+  onAdd: () => void;
+  onRemove: (idx: number) => void;
   onBack: () => void;
   onStart: () => void;
   pending: boolean;
   error: string | null;
 }) {
-  const cap = numTables * maxSeats;
-  const fits = playerCount <= cap;
-  const playersPerTableLow = Math.floor(playerCount / numTables);
-  const playersPerTableHigh = Math.ceil(playerCount / numTables);
-  const distribution =
-    playersPerTableLow === playersPerTableHigh
-      ? `${playersPerTableLow} per table`
-      : `${playersPerTableHigh} at ${playerCount % numTables} table${
-          playerCount % numTables === 1 ? "" : "s"
-        } / ${playersPerTableLow} at the rest`;
+  const totalSeats = tables.reduce((s, t) => s + t.max_seats, 0);
+  const fits = playerCount <= totalSeats;
 
   return (
     <>
       <section className="flex flex-col gap-3 rounded-lg border border-fg/10 p-4">
         <p className="text-sm text-fg/70">
           {playerCount} player{playerCount === 1 ? "" : "s"} will be randomized
-          across the tables when you start.{" "}
-          {fits ? <span>{distribution}.</span> : null}
+          across these tables when you start. Stragglers (when the count
+          doesn&apos;t divide evenly) land at whichever table has the most
+          remaining capacity.
         </p>
 
-        <div className="grid grid-cols-2 gap-3">
-          <NumberField
-            label="Tables"
-            value={numTables}
-            min={1}
-            max={10}
-            onChange={onChangeNumTables}
-          />
-          <NumberField
-            label="Max seats / table"
-            value={maxSeats}
-            min={2}
-            max={10}
-            onChange={onChangeMaxSeats}
-          />
-        </div>
+        <ul className="flex flex-col gap-2">
+          {tables.map((t, idx) => {
+            const css = TABLE_COLOR_CSS[t.color];
+            return (
+              <li
+                key={idx}
+                className="flex flex-col gap-2 rounded-md border p-3"
+                style={{
+                  borderColor: css.border,
+                  background: css.bg,
+                }}
+              >
+                <div className="flex items-baseline gap-2">
+                  <span
+                    className="text-[10px] font-semibold uppercase tracking-widest"
+                    style={{ color: css.text }}
+                  >
+                    Table {idx + 1}
+                  </span>
+                  {tables.length > 1 ? (
+                    <button
+                      type="button"
+                      onClick={() => onRemove(idx)}
+                      className="ml-auto text-[10px] uppercase tracking-widest text-fg/55 hover:text-danger"
+                    >
+                      Remove
+                    </button>
+                  ) : null}
+                </div>
+                <input
+                  type="text"
+                  value={t.name}
+                  maxLength={40}
+                  onChange={(e) => onPatch(idx, { name: e.target.value })}
+                  placeholder={`Table ${idx + 1}`}
+                  className="min-h-[44px] rounded-md border border-fg/15 bg-bg px-3 text-base text-fg focus:border-gold focus:outline-none"
+                />
+                <div className="grid grid-cols-[1fr_auto] gap-2">
+                  <ColorPicker
+                    value={t.color}
+                    onChange={(c) => onPatch(idx, { color: c })}
+                  />
+                  <NumberField
+                    label="Seats"
+                    value={t.max_seats}
+                    min={2}
+                    max={10}
+                    onChange={(n) => onPatch(idx, { max_seats: n })}
+                  />
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+
+        {tables.length < 10 ? (
+          <button
+            type="button"
+            onClick={onAdd}
+            className="h-11 min-h-[44px] rounded-md border border-dashed border-fg/25 text-xs font-semibold uppercase tracking-wider text-fg/70 hover:border-gold/50 hover:text-fg"
+          >
+            + Add table
+          </button>
+        ) : null}
 
         <p className={`text-xs ${fits ? "text-fg/55" : "text-danger"}`}>
           {fits
-            ? `${cap} seats total — ${cap - playerCount} empty.`
-            : `Only ${cap} seats configured for ${playerCount} players. Add a table or raise the seat cap.`}
+            ? `${totalSeats} seats configured · ${totalSeats - playerCount} empty.`
+            : `Only ${totalSeats} seats for ${playerCount} players. Add a table or raise a cap.`}
         </p>
       </section>
 
@@ -451,6 +511,44 @@ function TablesStep({
         </button>
       </StickyActions>
     </>
+  );
+}
+
+function ColorPicker({
+  value,
+  onChange,
+}: {
+  value: TableColor;
+  onChange: (c: TableColor) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <span className="text-[10px] font-semibold uppercase tracking-widest text-fg/60">
+        Color
+      </span>
+      <div className="flex flex-wrap gap-1.5">
+        {TABLE_COLORS.map((c) => {
+          const css = TABLE_COLOR_CSS[c];
+          const active = c === value;
+          return (
+            <button
+              key={c}
+              type="button"
+              onClick={() => onChange(c)}
+              aria-label={c}
+              aria-pressed={active}
+              className={`h-9 w-9 rounded-full border-2 ${
+                active ? "ring-2 ring-fg/40" : ""
+              }`}
+              style={{
+                background: css.hex,
+                borderColor: active ? "rgba(255,255,255,0.7)" : "rgba(0,0,0,0.4)",
+              }}
+            />
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
