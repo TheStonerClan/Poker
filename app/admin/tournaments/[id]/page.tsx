@@ -18,13 +18,20 @@ import { formatBlinds, formatChips, formatMoney } from "@/lib/admin/format";
 import { createClient } from "@/lib/supabase/server";
 import { computePayouts } from "prize-math";
 
-import { groupByTable } from "@/lib/admin/tables";
+import {
+  aggregateByTable,
+  canMerge,
+  groupByTable,
+  resolveTablesConfig,
+  TABLE_COLOR_CSS,
+} from "@/lib/admin/tables";
 
 import { LevelControls } from "../../_components/LevelControls";
 import { PlayerGrid } from "./_components/PlayerGrid";
 import { ColorUpInbox } from "./_components/ColorUpInbox";
 import { FinalizeButton } from "./_components/FinalizeButton";
 import { RerandomizeButton } from "./_components/RerandomizeButton";
+import { TableActions } from "./_components/TableActions";
 
 export const dynamic = "force-dynamic";
 
@@ -120,65 +127,149 @@ export default async function LiveTournamentPage({
 
         <LevelControls tournament={tournament} />
 
+        {(tournament.status === "running" || tournament.status === "paused") &&
+        tournament.num_tables &&
+        tournament.num_tables > 1
+          ? (() => {
+              const tablesCfg = resolveTablesConfig({
+                tablesConfig: tournament.tables_config,
+                numTables: tournament.num_tables,
+                maxSeatsPerTable: tournament.max_seats_per_table,
+              });
+              const buyback = (tournament.buyback_config_snapshot ?? {}) as {
+                rebuyChips?: number;
+                addOnChips?: number;
+              };
+              const stats = aggregateByTable({
+                rows: roster.map((r) => ({
+                  table_number: r.table_number,
+                  player_id: r.player_id,
+                  current_chips: r.current_chips,
+                  busted_at_time: r.busted_at_time,
+                  buyback_used: r.buyback_used,
+                  buyback_used_as: r.buyback_used_as,
+                  rebuys_used: r.rebuys_used,
+                  addons_used: r.addons_used,
+                  players: r.player
+                    ? { id: r.player.id, name: r.player.name }
+                    : null,
+                })),
+                tablesConfig: tablesCfg,
+                chipsCfg: {
+                  startingStack: tournament.starting_stack_snapshot ?? 0,
+                  rebuyChips:
+                    buyback.rebuyChips ?? tournament.rebuy_chips_snapshot ?? 0,
+                  addOnChips: buyback.addOnChips ?? 0,
+                },
+              });
+              const counts = stats.map((s) => s.activePlayers);
+              const spread =
+                counts.length > 0
+                  ? Math.max(...counts) - Math.min(...counts)
+                  : 0;
+              const totalActive = counts.reduce((s, n) => s + n, 0);
+              return (
+                <TableActions
+                  tournamentId={tournament.id}
+                  spread={spread}
+                  mergeFeasible={canMerge(stats)}
+                  activeCount={totalActive}
+                />
+              );
+            })()
+          : null}
+
         {tournament.status === "scheduled" && tournament.num_tables ? (
           <section className="rounded-lg border border-gold/30 bg-gold/5 p-4">
-            <div className="mb-3 flex items-baseline justify-between gap-2">
-              <h2 className="text-label text-[11px] font-semibold uppercase tracking-[0.25em]">
-                Table assignments
-              </h2>
-              <span className="text-xs text-fg/55">
-                {tournament.num_tables} table
-                {tournament.num_tables === 1 ? "" : "s"} ·{" "}
-                {tournament.max_seats_per_table ?? "?"} seats max
-              </span>
-            </div>
-            <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              {Array.from(
-                groupByTable(
-                  roster.map((r) => ({ ...r, table_number: r.table_number ?? null })),
-                  tournament.num_tables,
-                ),
-              )
-                .sort(([a], [b]) => a - b)
-                .map(([tableNum, rows]) => {
-                  const sorted = [...rows].sort(
-                    (a, b) =>
-                      (a.seat_number ?? Number.POSITIVE_INFINITY) -
-                      (b.seat_number ?? Number.POSITIVE_INFINITY),
-                  );
-                  return (
-                    <li
-                      key={tableNum}
-                      className="rounded-md border border-fg/10 bg-bg/40 p-3"
-                    >
-                      <p className="text-[10px] font-semibold uppercase tracking-widest text-gold/80">
-                        Table {tableNum} · {sorted.length} seated
-                      </p>
-                      {sorted.length === 0 ? (
-                        <p className="mt-1 text-xs italic text-fg/40">
-                          No players assigned.
-                        </p>
-                      ) : (
-                        <ul className="mt-2 flex flex-col gap-0.5">
-                          {sorted.map((p) => (
-                            <li
-                              key={p.id}
-                              className="flex items-baseline gap-2 text-sm"
+            {(() => {
+              const tablesCfg = resolveTablesConfig({
+                tablesConfig: tournament.tables_config,
+                numTables: tournament.num_tables,
+                maxSeatsPerTable: tournament.max_seats_per_table,
+              });
+              const totalSeats = tablesCfg.reduce(
+                (s, t) => s + t.max_seats,
+                0,
+              );
+              return (
+                <>
+                  <div className="mb-3 flex items-baseline justify-between gap-2">
+                    <h2 className="text-label text-[11px] font-semibold uppercase tracking-[0.25em]">
+                      Table assignments
+                    </h2>
+                    <span className="text-xs text-fg/55">
+                      {tablesCfg.length} table
+                      {tablesCfg.length === 1 ? "" : "s"} · {totalSeats} seats
+                    </span>
+                  </div>
+                  <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    {Array.from(
+                      groupByTable(
+                        roster.map((r) => ({
+                          ...r,
+                          table_number: r.table_number ?? null,
+                        })),
+                        tablesCfg.length,
+                      ),
+                    )
+                      .sort(([a], [b]) => a - b)
+                      .map(([tableNum, rows]) => {
+                        const cfg = tablesCfg[tableNum - 1];
+                        const css = cfg
+                          ? TABLE_COLOR_CSS[cfg.color]
+                          : TABLE_COLOR_CSS.gold;
+                        const sorted = [...rows].sort(
+                          (a, b) =>
+                            (a.seat_number ?? Number.POSITIVE_INFINITY) -
+                            (b.seat_number ?? Number.POSITIVE_INFINITY),
+                        );
+                        return (
+                          <li
+                            key={tableNum}
+                            className="rounded-md border-2 p-3"
+                            style={{
+                              borderColor: css.border,
+                              background: css.bg,
+                            }}
+                          >
+                            <p
+                              className="text-[10px] font-semibold uppercase tracking-widest"
+                              style={{ color: css.text }}
                             >
-                              <span className="font-mono w-[3ch] text-right tabular-nums text-fg/55">
-                                {p.seat_number ?? "—"}
-                              </span>
-                              <span className="text-fg">
-                                {p.player?.name ?? "—"}
-                              </span>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </li>
-                  );
-                })}
-            </ul>
+                              {cfg?.name ?? `Table ${tableNum}`} ·{" "}
+                              {sorted.length}/{cfg?.max_seats ?? "?"} seated
+                            </p>
+                            {sorted.length === 0 ? (
+                              <p className="mt-1 text-xs italic text-fg/40">
+                                No players assigned.
+                              </p>
+                            ) : (
+                              <ul className="mt-2 flex flex-col gap-0.5">
+                                {sorted.map((p) => (
+                                  <li
+                                    key={p.id}
+                                    className="flex items-baseline gap-2 text-sm"
+                                  >
+                                    <span
+                                      className="font-mono w-[3ch] text-right tabular-nums"
+                                      style={{ color: css.text }}
+                                    >
+                                      {p.seat_number ?? "—"}
+                                    </span>
+                                    <span className="text-fg">
+                                      {p.player?.name ?? "—"}
+                                    </span>
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                          </li>
+                        );
+                      })}
+                  </ul>
+                </>
+              );
+            })()}
             <div className="mt-3">
               <RerandomizeButton tournamentId={tournament.id} />
             </div>
