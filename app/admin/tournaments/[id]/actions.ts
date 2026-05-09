@@ -185,7 +185,9 @@ export async function bustPlayer(input: {
 
     const { data: tp } = await supabase
       .from("tournament_players")
-      .select("tournament_id, player_id, busted_at_time")
+      .select(
+        "tournament_id, player_id, busted_at_time, table_number, seat_number",
+      )
       .eq("id", tournamentPlayerId)
       .maybeSingle();
     if (!tp) throw new Error("Player slot not found");
@@ -212,12 +214,21 @@ export async function bustPlayer(input: {
     // busted_at_time, so each player gets exactly one final position
     // regardless of how many rebuys they cycled through.
     const now = new Date().toISOString();
+    // Free the chair: null the seat_number so balance / merge can reassign
+    // it, but keep table_number so per-table chip-conservation math still
+    // attributes their starting stack + rebuys/addons to the right table.
+    // The original (table, seat) is preserved on the bust event payload
+    // for analytics. Without this, busted players' seats stayed in the
+    // partial unique index and blocked active reassignments — the source
+    // of "Balance: no free seat at table N (cap N)" and the merge
+    // unique-key violation.
     const { error } = await supabase
       .from("tournament_players")
       .update({
         busted_at_level: t?.current_level ?? null,
         busted_at_time: now,
         current_chips: 0,
+        seat_number: null,
       })
       .eq("id", tournamentPlayerId);
     if (error) throw new Error(error.message);
@@ -229,6 +240,8 @@ export async function bustPlayer(input: {
         tournament_player_id: tournamentPlayerId,
         player_id: tp.player_id,
         at_level: t?.current_level ?? null,
+        table_number: tp.table_number ?? null,
+        seat_number: tp.seat_number ?? null,
       },
     });
 
@@ -302,7 +315,7 @@ export async function rebuyPlayer(input: {
     const { data: t } = await supabase
       .from("tournaments")
       .select(
-        "current_level, rebuy_chips_snapshot, buyback_config_snapshot",
+        "current_level, rebuy_chips_snapshot, buyback_config_snapshot, num_tables, max_seats_per_table, tables_config",
       )
       .eq("id", tp.tournament_id)
       .maybeSingle();
@@ -344,6 +357,63 @@ export async function rebuyPlayer(input: {
     const chips = cfg.rebuyChips ?? t?.rebuy_chips_snapshot ?? 0;
     const now = new Date().toISOString();
 
+    // Find a seat for the rebought player. bustPlayer nulled their
+    // seat_number to free the chair; rebuy needs to put them back at a
+    // table. Prefer their original table_number (still set on the row);
+    // fall back to whichever table has the most free seats if their
+    // original is now at capacity (e.g., a Balance moved someone else
+    // into their old slot).
+    const tables = resolveTablesConfig({
+      tablesConfig: t?.tables_config,
+      numTables: t?.num_tables ?? null,
+      maxSeatsPerTable: t?.max_seats_per_table ?? null,
+    });
+    let chosenTable: number | null = tp.table_number ?? null;
+    let chosenSeat: number | null = null;
+    if (tables.length > 0) {
+      const { data: occupants } = await supabase
+        .from("tournament_players")
+        .select("table_number, seat_number")
+        .eq("tournament_id", tp.tournament_id)
+        .not("seat_number", "is", null);
+      const occupied = new Map<number, Set<number>>();
+      for (const o of occupants ?? []) {
+        if (o.table_number != null && o.seat_number != null) {
+          if (!occupied.has(o.table_number)) {
+            occupied.set(o.table_number, new Set());
+          }
+          occupied.get(o.table_number)?.add(o.seat_number);
+        }
+      }
+      const findSeat = (tableNum: number): number | null => {
+        if (tableNum < 1 || tableNum > tables.length) return null;
+        const cap = tables[tableNum - 1].max_seats;
+        const used = occupied.get(tableNum) ?? new Set<number>();
+        for (let s = 1; s <= cap; s++) {
+          if (!used.has(s)) return s;
+        }
+        return null;
+      };
+      // Try original table first; on full, fall back to whichever table
+      // has any room (lowest table number breaks ties).
+      if (chosenTable != null) chosenSeat = findSeat(chosenTable);
+      if (chosenSeat == null) {
+        for (let i = 1; i <= tables.length; i++) {
+          const seat = findSeat(i);
+          if (seat != null) {
+            chosenTable = i;
+            chosenSeat = seat;
+            break;
+          }
+        }
+      }
+      if (chosenSeat == null) {
+        throw new Error(
+          "No free seat at any table for the rebuy. Bust someone or expand a table.",
+        );
+      }
+    }
+
     // Build the update payload conditionally so we don't try to write the
     // 0003 columns on a DB that doesn't have them.
     const update: TablesUpdate<"tournament_players"> = {
@@ -358,6 +428,10 @@ export async function rebuyPlayer(input: {
       finishing_position: null,
       current_chips: chips,
     };
+    if (chosenSeat != null) {
+      update.seat_number = chosenSeat;
+      if (chosenTable != null) update.table_number = chosenTable;
+    }
     if (typeof tp.rebuys_used === "number") {
       update.rebuys_used = rebuysUsed + 1;
     }
@@ -378,6 +452,8 @@ export async function rebuyPlayer(input: {
         chips,
         tokens_spent_after: tokensSpent + 1,
         tokens_per_player: tokensPerPlayer,
+        table_number: chosenTable,
+        seat_number: chosenSeat,
       },
     });
 
@@ -897,9 +973,23 @@ export async function balanceTables(
       throw new Error("Tables are already balanced.");
     }
 
+    // Defensive cleanup: free busted players' seats so they don't block
+    // active reassignments via the partial unique index on
+    // (tournament_id, table_number, seat_number). Going forward,
+    // bustPlayer nulls seat_number on bust, so this only catches old
+    // tournaments created before that fix. table_number stays so the
+    // per-table chip-conservation math still attributes their stack.
+    const { error: clearBustedErr } = await supabase
+      .from("tournament_players")
+      .update({ seat_number: null })
+      .eq("tournament_id", id)
+      .not("busted_at_time", "is", null);
+    if (clearBustedErr) throw new Error(clearBustedErr.message);
+
     // Each move targets an unused (table, seat) per the helper's invariant
-    // (it tracks the occupied set as it generates moves). So a sequence of
-    // single-row updates can't violate the partial unique index.
+    // (it tracks the occupied set as it generates moves, ignoring busted
+    // players). So a sequence of single-row updates can't violate the
+    // partial unique index.
     for (const m of moves) {
       const { error } = await supabase
         .from("tournament_players")
@@ -966,14 +1056,24 @@ export async function mergeTables(
       throw new Error(plan.reason);
     }
 
-    // Two-phase: clear destination-conflicting seats first. Movers'
-    // target seats might collide with the seats of OTHER movers mid-
-    // update if we just write one at a time (e.g. mover A goes to
-    // seat 1 of target table while mover B leaves seat 1 of source —
-    // fine — but if any mover's target seat happens to match a
-    // current seat at that same target table for a different mover,
-    // we'd conflict). Cheapest-correct approach: null out every
-    // mover's current (table, seat) up front, then assign.
+    // Defensive cleanup: free busted players' seats so they don't block
+    // active reassignments via the partial unique index on
+    // (tournament_id, table_number, seat_number). Going forward,
+    // bustPlayer nulls seat_number on bust, so this only catches
+    // tournaments created before that fix. table_number stays so the
+    // per-table chip-conservation math still attributes their stack.
+    const { error: clearBustedErr } = await supabase
+      .from("tournament_players")
+      .update({ seat_number: null })
+      .eq("tournament_id", id)
+      .not("busted_at_time", "is", null);
+    if (clearBustedErr) throw new Error(clearBustedErr.message);
+
+    // Two-phase: clear movers' (table, seat) up front. Their target
+    // seats might collide mid-loop with each other or with the seats
+    // they're currently occupying on the source table. Stayers (active
+    // players already at the target) are untouched — their seats were
+    // factored into the plan via computeMergeMoves's `usedSeats` set.
     const moverIds = new Set(plan.moves.map((m) => m.id));
     if (moverIds.size > 0) {
       const { error: clearErr } = await supabase

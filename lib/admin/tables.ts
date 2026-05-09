@@ -436,10 +436,16 @@ export function computeBalanceMoves(args: {
   const T = args.tablesConfig.length;
   if (T <= 1) return [];
 
-  // Track every currently-occupied (table, seat) so we don't reassign
-  // into a slot that's already in use (active or busted).
+  // Track active-player occupied seats so we don't reassign into a slot
+  // currently held by an active player. Busted players are intentionally
+  // skipped: their seats are about to be cleared by the action wrapper
+  // (see balanceTables in /app/admin/tournaments/[id]/actions.ts) so
+  // they're effectively free for reuse. Including them here would cause
+  // "no free seat at table N (cap N)" errors on tables where many busts
+  // had stacked up.
   const occupied = new Set<string>();
   for (const r of args.rows) {
+    if (r.busted_at_time != null) continue;
     if (r.table_number != null && r.seat_number != null) {
       occupied.add(seatKey(r.table_number, r.seat_number));
     }
