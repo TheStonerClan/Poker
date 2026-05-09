@@ -8,6 +8,7 @@ import {
   rebuyPlayer,
 } from "@/app/admin/tournaments/[id]/actions";
 import { formatChips } from "@/lib/admin/format";
+import type { LatestSnapshot } from "@/lib/admin/chip-snapshots";
 
 type Row = {
   id: string;
@@ -17,6 +18,12 @@ type Row = {
   bustedAtLevel?: number | null;
   buybackUsed: boolean;
   buybackUsedAs?: string | null;
+  /**
+   * Player's most recent self-reported chip total (from /play during a
+   * break). Drives the "Logged $X at L5 (+$200)" badge below the name.
+   * Null if they haven't logged anything this tournament.
+   */
+  latestSnapshot?: LatestSnapshot | null;
 };
 
 export function PlayerGrid({
@@ -84,6 +91,27 @@ export function PlayerGrid({
               {r.buybackUsed ? (
                 <p className="mt-0.5 text-[10px] uppercase tracking-wider text-gold/80">
                   Buyback · {r.buybackUsedAs ?? "used"}
+                </p>
+              ) : null}
+              {r.latestSnapshot ? (
+                <p className="mt-0.5 text-[10px] tracking-wider text-fg/55">
+                  <span className="uppercase">Logged</span>{" "}
+                  <span className="font-mono tabular-nums text-fg/80">
+                    {formatChips(r.latestSnapshot.chips)}
+                  </span>{" "}
+                  <span className="uppercase">at L{r.latestSnapshot.levelNum}</span>
+                  {r.latestSnapshot.deltaFromPrevious !== 0 ? (
+                    <span
+                      className={`ml-1 font-mono tabular-nums ${
+                        r.latestSnapshot.deltaFromPrevious > 0
+                          ? "text-success"
+                          : "text-danger"
+                      }`}
+                    >
+                      {r.latestSnapshot.deltaFromPrevious > 0 ? "+" : ""}
+                      {formatChips(r.latestSnapshot.deltaFromPrevious)}
+                    </span>
+                  ) : null}
                 </p>
               ) : null}
 

@@ -84,7 +84,11 @@ export default async function TvPage() {
     }
 
     const recapRow = recapTournament as TournamentRow;
-    const [{ data: recapPlayers }, { data: recapPayouts }] = await Promise.all([
+    const [
+      { data: recapPlayers },
+      { data: recapPayouts },
+      { data: recapSnapshots },
+    ] = await Promise.all([
       supabase
         .from("tournament_players")
         .select(
@@ -96,6 +100,14 @@ export default async function TvPage() {
         .select("position, amount, player_id, is_chopped")
         .eq("tournament_id", recapRow.id)
         .order("position", { ascending: true }),
+      // Chip snapshots for the "Biggest swings" section. Ordered ASC
+      // so biggestChipSwings can scan in order without resorting.
+      supabase
+        .from("tournament_events")
+        .select("type, payload, created_at")
+        .eq("tournament_id", recapRow.id)
+        .eq("type", "chip_snapshot")
+        .order("created_at", { ascending: true }),
     ]);
 
     return (
@@ -103,6 +115,13 @@ export default async function TvPage() {
         tournament={recapRow}
         players={(recapPlayers ?? []) as unknown as TournamentPlayerWithName[]}
         payouts={recapPayouts ?? []}
+        chipSnapshots={
+          (recapSnapshots ?? []) as Array<{
+            type: string;
+            payload: Record<string, unknown> | null;
+            created_at: string;
+          }>
+        }
       />
     );
   }

@@ -10,7 +10,12 @@ import {
   getTournamentRoster,
   nextLevel,
 } from "@/lib/admin/queries";
+import {
+  latestChipSnapshotPerPlayer,
+  type ChipSnapshotEvent,
+} from "@/lib/admin/chip-snapshots";
 import { formatBlinds, formatChips, formatMoney } from "@/lib/admin/format";
+import { createClient } from "@/lib/supabase/server";
 import { computePayouts } from "prize-math";
 
 import { LevelControls } from "../../_components/LevelControls";
@@ -29,10 +34,23 @@ export default async function LiveTournamentPage({
   const tournament = await getTournament(id);
   if (!tournament) notFound();
 
-  const [roster, pendingColorUps] = await Promise.all([
+  const supabase = await createClient();
+  const [roster, pendingColorUps, snapshotEventsRes] = await Promise.all([
     getTournamentRoster(tournament.id),
     getPendingColorUpRequests(tournament.id),
+    // Pull every chip_snapshot event for this tournament so we can show
+    // each player's latest self-reported total + the Δ from their
+    // previous report, on their PlayerGrid tile. Ordered ascending so
+    // the latestChipSnapshotPerPlayer reducer keeps the last one.
+    supabase
+      .from("tournament_events")
+      .select("type, payload, created_at")
+      .eq("tournament_id", tournament.id)
+      .eq("type", "chip_snapshot")
+      .order("created_at", { ascending: true }),
   ]);
+  const snapshotEvents = (snapshotEventsRes.data ?? []) as ChipSnapshotEvent[];
+  const latestSnapshotByPlayer = latestChipSnapshotPerPlayer(snapshotEvents);
 
   const cur = currentLevel(tournament);
   const nxt = nextLevel(tournament);
@@ -130,6 +148,9 @@ export default async function LiveTournamentPage({
               busted: false,
               buybackUsed: r.buyback_used,
               buybackUsedAs: r.buyback_used_as,
+              latestSnapshot: r.player_id
+                ? (latestSnapshotByPlayer.get(r.player_id) ?? null)
+                : null,
             }))}
           />
         </section>
@@ -150,6 +171,9 @@ export default async function LiveTournamentPage({
                 bustedAtLevel: r.busted_at_level,
                 buybackUsed: r.buyback_used,
                 buybackUsedAs: r.buyback_used_as,
+                latestSnapshot: r.player_id
+                  ? (latestSnapshotByPlayer.get(r.player_id) ?? null)
+                  : null,
               }))}
             />
           </section>
