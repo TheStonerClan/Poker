@@ -89,6 +89,7 @@ export default async function TvPage() {
       { data: recapPlayers },
       { data: recapPayouts },
       { data: recapSnapshots },
+      { data: recapGameEvents },
     ] = await Promise.all([
       supabase
         .from("tournament_players")
@@ -109,6 +110,15 @@ export default async function TvPage() {
         .eq("tournament_id", recapRow.id)
         .eq("type", "chip_snapshot")
         .order("created_at", { ascending: true }),
+      // Bust / rebuy / addon events power the per-player history
+      // timeline on the Stats slide ("bust L4 → rebuy L5 → bust L7").
+      // Ordered ASC so each player's history reads chronologically.
+      supabase
+        .from("tournament_events")
+        .select("type, payload, created_at")
+        .eq("tournament_id", recapRow.id)
+        .in("type", ["bust", "rebuy", "addon"])
+        .order("created_at", { ascending: true }),
     ]);
 
     return (
@@ -118,6 +128,13 @@ export default async function TvPage() {
         payouts={recapPayouts ?? []}
         chipSnapshots={
           (recapSnapshots ?? []) as Array<{
+            type: string;
+            payload: Record<string, unknown> | null;
+            created_at: string;
+          }>
+        }
+        gameEvents={
+          (recapGameEvents ?? []) as Array<{
             type: string;
             payload: Record<string, unknown> | null;
             created_at: string;
