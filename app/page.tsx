@@ -1,6 +1,16 @@
 import Link from "next/link";
 
-export const dynamic = "force-static";
+import LocalDateTime from "@/components/admin/LocalDateTime";
+import {
+  fetchUpcomingTournaments,
+  type UpcomingTournament,
+} from "@/lib/admin/upcoming";
+import { createServiceClient } from "@/lib/supabase/service";
+
+// Adding the upcoming-tournaments section pulls live data from
+// Supabase, so the page can no longer be statically prerendered. The
+// menu tiles are still cheap to render so the cold-start cost is small.
+export const dynamic = "force-dynamic";
 
 /**
  * holdemclock.com landing page.
@@ -20,14 +30,31 @@ export const dynamic = "force-static";
  *   chunky card) since most of the time the admin is the one
  *   actually using the site.
  *
- * The page intentionally does NO data fetching — it's the cold-start
- * surface and stays static so it can render on the very first hit
- * regardless of Supabase availability.
+ * Below the menu we surface "Upcoming tournaments" — a read-only
+ * listing of scheduled games (name + location + date) so guests
+ * scanning the home page can see what's on deck without clicking
+ * into anything. Service-role read so it works without auth.
  */
-export default function LandingPage() {
+export default async function LandingPage() {
+  let upcoming: UpcomingTournament[] = [];
+  // Guard the data fetch so the page still renders if Supabase is
+  // misconfigured (e.g. missing env vars on a fresh deploy) — the
+  // menu is the must-have, the upcoming list is the nice-to-have.
+  if (
+    process.env.NEXT_PUBLIC_SUPABASE_URL &&
+    process.env.SUPABASE_SERVICE_ROLE_KEY
+  ) {
+    try {
+      const supabase = createServiceClient();
+      upcoming = await fetchUpcomingTournaments(supabase);
+    } catch {
+      upcoming = [];
+    }
+  }
+
   return (
-    <main className="min-h-screen flex flex-col items-center justify-center bg-bg text-fg px-6 py-10">
-      <header className="mb-12 flex flex-col items-center gap-3 text-center">
+    <main className="min-h-screen flex flex-col items-center bg-bg text-fg px-6 py-10">
+      <header className="mb-12 mt-6 flex flex-col items-center gap-3 text-center">
         <span className="text-label uppercase tracking-[0.4em] text-xs font-semibold">
           Holdem Clock
         </span>
@@ -63,6 +90,8 @@ export default function LandingPage() {
           tone="primary"
         />
       </nav>
+
+      <UpcomingSection upcoming={upcoming} />
 
       <footer className="mt-12 text-center text-[10px] uppercase tracking-[0.3em] text-fg/35">
         holdemclock.com
@@ -102,5 +131,59 @@ function Tile({
         {label}
       </span>
     </Link>
+  );
+}
+
+/**
+ * Read-only listing of scheduled tournaments. Public visitors don't
+ * click through (no admin permissions) — they just see name,
+ * location, and date so they know what's planned. Hidden entirely
+ * when the list is empty so the landing stays clean during a quiet
+ * stretch.
+ */
+function UpcomingSection({ upcoming }: { upcoming: UpcomingTournament[] }) {
+  if (upcoming.length === 0) return null;
+  return (
+    <section
+      aria-label="Upcoming tournaments"
+      className="mt-10 w-full max-w-3xl"
+    >
+      <h2 className="mb-3 text-label uppercase tracking-[0.3em] text-[11px] font-semibold">
+        Upcoming tournaments
+      </h2>
+      <ul className="flex flex-col gap-2">
+        {upcoming.map((u) => (
+          <li
+            key={u.id}
+            className="flex flex-col gap-1 rounded-lg border border-fg/10 px-4 py-3 sm:flex-row sm:items-baseline sm:justify-between"
+          >
+            <div>
+              <p className="text-sm font-semibold text-fg">{u.templateName}</p>
+              {u.location ? (
+                <p className="mt-0.5 text-xs text-fg/55">{u.location}</p>
+              ) : null}
+            </div>
+            <p className="font-mono text-xs tabular-nums text-fg/70">
+              {u.scheduled_at ? (
+                <LocalDateTime
+                  iso={u.scheduled_at}
+                  options={{
+                    weekday: "short",
+                    month: "short",
+                    day: "numeric",
+                    hour: "numeric",
+                    minute: "2-digit",
+                  }}
+                />
+              ) : (
+                <span className="uppercase tracking-widest text-[10px] text-fg/45">
+                  TBD
+                </span>
+              )}
+            </p>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }

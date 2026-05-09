@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import LocalDateTime from "@/components/admin/LocalDateTime";
 import { TopBar } from "@/components/admin/TopBar";
 import { computePayouts } from "prize-math";
 import {
@@ -10,6 +11,11 @@ import {
   nextLevel,
 } from "@/lib/admin/queries";
 import { formatBlinds, formatMoney } from "@/lib/admin/format";
+import { createClient } from "@/lib/supabase/server";
+import {
+  fetchUpcomingTournaments,
+  type UpcomingTournament,
+} from "@/lib/admin/upcoming";
 
 import { LevelControls } from "./_components/LevelControls";
 import { QuickBustList } from "./_components/QuickBustList";
@@ -17,8 +23,21 @@ import { QuickBustList } from "./_components/QuickBustList";
 export default async function AdminDashboardPage() {
   const tournament = await getActiveTournament();
 
+  // Always fetch upcoming — surfaced in BOTH the active and empty
+  // dashboard states. While a tournament is running the admin still
+  // wants to see / prep next week's; when nothing's running it's the
+  // primary call-to-action under "Start tournament".
+  const supabase = await createClient();
+  const upcoming = await fetchUpcomingTournaments(supabase);
+  // When there's an active tournament, hide IT from the upcoming
+  // list. The admin is already operating it from the page above; it
+  // doesn't belong in the "upcoming" section.
+  const upcomingFiltered = tournament
+    ? upcoming.filter((u) => u.id !== tournament.id)
+    : upcoming;
+
   if (!tournament) {
-    return <EmptyDashboard />;
+    return <EmptyDashboard upcoming={upcomingFiltered} />;
   }
 
   const [roster, pendingColorUps] = await Promise.all([
@@ -145,6 +164,8 @@ export default async function AdminDashboardPage() {
             }))}
           />
         </section>
+
+        <UpcomingAdminSection upcoming={upcomingFiltered} />
       </main>
     </>
   );
@@ -168,11 +189,16 @@ function ordinal(n: number): string {
   return `${n}${suffix}`;
 }
 
-function EmptyDashboard() {
+function EmptyDashboard({ upcoming }: { upcoming: UpcomingTournament[] }) {
   return (
     <>
       <TopBar title="Holdem Clock" subtitle="No tournament running" />
-      <main className="flex flex-1 flex-col items-center justify-center gap-6 px-6 py-10 text-center">
+      {/* Layout was `justify-center` when this view only held the start
+          CTA; with the upcoming list below it now flows top-down. The
+          start block stays the visual anchor (gold CTA), the upcoming
+          list sits underneath, and there's a bottom margin so nothing
+          collides with the BottomNav. */}
+      <main className="flex flex-1 flex-col items-center gap-8 px-6 pt-12 pb-6 text-center">
         <div>
           <p className="text-label text-xs font-semibold uppercase tracking-[0.3em]">
             Ready when you are
@@ -190,7 +216,7 @@ function EmptyDashboard() {
         >
           Start tournament
         </Link>
-        <div className="mt-2 flex flex-wrap items-center justify-center gap-3 text-sm">
+        <div className="flex flex-wrap items-center justify-center gap-3 text-sm">
           <Link
             href="/admin/templates"
             className="text-fg/70 underline-offset-4 hover:underline"
@@ -205,8 +231,79 @@ function EmptyDashboard() {
             Manage players
           </Link>
         </div>
+
+        <div className="w-full max-w-md text-left">
+          <UpcomingAdminSection upcoming={upcoming} />
+        </div>
       </main>
     </>
+  );
+}
+
+/**
+ * Upcoming-tournaments list as it appears on /admin. Same data
+ * source as the public landing page, but every row is clickable —
+ * the link goes to /admin/tournaments/[id] where the admin can
+ * edit settings, add players in advance, and start the event when
+ * the room is ready.
+ */
+function UpcomingAdminSection({
+  upcoming,
+}: {
+  upcoming: UpcomingTournament[];
+}) {
+  if (upcoming.length === 0) return null;
+  return (
+    <section
+      aria-label="Upcoming tournaments"
+      className="rounded-lg border border-fg/10 p-4"
+    >
+      <div className="mb-2 flex items-baseline justify-between gap-2">
+        <h2 className="text-label text-[11px] font-semibold uppercase tracking-[0.25em]">
+          Upcoming
+        </h2>
+        <span className="text-[10px] uppercase tracking-widest text-fg/45">
+          Tap to edit · add players · start
+        </span>
+      </div>
+      <ul className="flex flex-col gap-2">
+        {upcoming.map((u) => (
+          <li key={u.id}>
+            <Link
+              href={`/admin/tournaments/${u.id}`}
+              className="flex flex-col gap-1 rounded-md border border-fg/10 px-3 py-2.5 hover:border-gold/40"
+            >
+              <div className="flex items-baseline justify-between gap-2">
+                <p className="text-sm font-semibold text-fg">
+                  {u.templateName}
+                </p>
+                <p className="font-mono text-xs tabular-nums text-fg/70">
+                  {u.scheduled_at ? (
+                    <LocalDateTime
+                      iso={u.scheduled_at}
+                      options={{
+                        weekday: "short",
+                        month: "short",
+                        day: "numeric",
+                        hour: "numeric",
+                        minute: "2-digit",
+                      }}
+                    />
+                  ) : (
+                    <span className="uppercase tracking-widest text-[10px] text-fg/45">
+                      TBD
+                    </span>
+                  )}
+                </p>
+              </div>
+              {u.location ? (
+                <p className="text-xs text-fg/55">{u.location}</p>
+              ) : null}
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 
