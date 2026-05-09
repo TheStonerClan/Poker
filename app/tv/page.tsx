@@ -146,6 +146,13 @@ export default async function TvPage() {
 
   const tournamentRow = tournament as TournamentRow;
 
+  // Build the player-view base URL from the request host so QR codes work in
+  // any environment (localhost, staging, prod) without a separate env var.
+  // Hoisted above the pregame branch so the pregame QR uses the same origin.
+  const proto = h.get("x-forwarded-proto") ?? "http";
+  const host = h.get("host") ?? "localhost:3000";
+  const playSessionBaseUrl = `${proto}://${host}/play`;
+
   // Pre-game view: when the tournament is `scheduled` (admin hasn't
   // started the timer yet), show the table assignments instead of the
   // live timer. The 30s auto-refresh inside <TvPregame> flips the screen
@@ -162,6 +169,7 @@ export default async function TvPage() {
       <TvPregame
         tournament={tournamentRow}
         players={(pregamePlayers ?? []) as unknown as TournamentPlayerWithName[]}
+        playSessionBaseUrl={playSessionBaseUrl}
       />
     );
   }
@@ -212,12 +220,6 @@ export default async function TvPage() {
     payload: Record<string, unknown> | null;
     created_at: string;
   }>;
-
-  // Build the player-view base URL from the request host so QR codes work in
-  // any environment (localhost, staging, prod) without a separate env var.
-  const proto = h.get("x-forwarded-proto") ?? "http";
-  const host = h.get("host") ?? "localhost:3000";
-  const playSessionBaseUrl = `${proto}://${host}/play`;
 
   return (
     <TvDisplay
