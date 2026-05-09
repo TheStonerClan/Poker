@@ -20,12 +20,29 @@ type Step = "template" | "confirm" | "players" | "tables";
 export function NewTournamentWizard({
   templates,
   players,
+  initialTemplateId = null,
 }: {
   templates: TournamentTemplate[];
   players: Player[];
+  /**
+   * When set (and matches an existing template), the wizard pre-
+   * selects the template and starts on the Settings step so the
+   * admin doesn't have to re-pick what the deep link already named.
+   * Used by the upcoming-tournaments list on / and /admin to launch
+   * a recurrence-projected occurrence straight into staging.
+   */
+  initialTemplateId?: string | null;
 }) {
-  const [step, setStep] = useState<Step>("template");
-  const [templateId, setTemplateId] = useState<string>(templates[0]?.id ?? "");
+  // Start on the Settings step when a templateId came in via the URL
+  // — otherwise the admin would land on a one-option picker just to
+  // click the next button. Keep the picker visible if the deep link
+  // didn't resolve so they can still pick anything.
+  const [step, setStep] = useState<Step>(
+    initialTemplateId ? "confirm" : "template",
+  );
+  const [templateId, setTemplateId] = useState<string>(
+    initialTemplateId ?? templates[0]?.id ?? "",
+  );
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [tables, setTables] = useState<TableConfig[]>([defaultTableEntry(1, 9)]);
   const [tablesTouched, setTablesTouched] = useState(false);
