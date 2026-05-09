@@ -35,6 +35,8 @@ export async function ScheduleTab({ template }: Props) {
           templateId={template.id}
           templateName={template.name}
           ruleString={template.recurrence_rule}
+          startTime={template.start_time ?? null}
+          startTimezone={template.start_timezone ?? null}
         />
       </section>
 

@@ -364,6 +364,8 @@ export type Database = {
           recurrence_rule: string | null
           rounding_mode: Json
           side_pots: Json
+          start_time: string | null
+          start_timezone: string | null
           starting_stack: number
           starting_stack_composition: Json
           updated_at: string
@@ -386,6 +388,8 @@ export type Database = {
           recurrence_rule?: string | null
           rounding_mode?: Json
           side_pots?: Json
+          start_time?: string | null
+          start_timezone?: string | null
           starting_stack: number
           starting_stack_composition?: Json
           updated_at?: string
@@ -408,6 +412,8 @@ export type Database = {
           recurrence_rule?: string | null
           rounding_mode?: Json
           side_pots?: Json
+          start_time?: string | null
+          start_timezone?: string | null
           starting_stack?: number
           starting_stack_composition?: Json
           updated_at?: string

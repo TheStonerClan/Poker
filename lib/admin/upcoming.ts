@@ -5,6 +5,12 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/database.types";
 import { toIsoDate } from "@/lib/schedule/next-night";
 import { resolveNextNight } from "@/lib/schedule/server";
+import {
+  isValidHhMm,
+  isValidTimezone,
+  splitHhMm,
+  zonedWallClockToUtc,
+} from "@/lib/schedule/zoned-time";
 
 /**
  * One row in the "upcoming tournaments" listing on the home pages.
@@ -14,54 +20,58 @@ import { resolveNextNight } from "@/lib/schedule/server";
  * - **Materialized** (`kind: 'scheduled'`) — rows in the `tournaments`
  *   table the admin already created via the wizard with
  *   `status='scheduled'`. These have an actual id (clickable on
- *   /admin) and a precise `scheduled_at` timestamp.
+ *   /admin) and a precise `scheduled_at` UTC timestamp.
  *
  * - **Projected** (`kind: 'projected'`) — the next occurrence of any
- *   template that has a `recurrence_rule` set, computed via
- *   `resolveNextNight`. These don't exist in the `tournaments` table
- *   yet — they're the future dates the admin can see in /admin/settings.
- *   On the admin home each one links to its template's Schedule tab
- *   so the admin can move/cancel; on the public landing they're
- *   read-only.
+ *   template that has a `recurrence_rule`, computed via
+ *   `resolveNextNight`. When the template has `start_time` +
+ *   `start_timezone`, we compute the actual UTC instant for the next
+ *   occurrence's wall-clock time in that zone — so the homepage can
+ *   show "Fri, May 15, 7:00 PM CDT" instead of guessing date-only.
+ *   When the template has no time set we fall back to a date-only
+ *   render.
  *
  * Dedupe rule: if a template already has a materialized scheduled
  * tournament whose date matches the projected next date, drop the
- * projection. Otherwise both surface — useful when the admin has
- * pre-built next Friday's game manually AND the recurrence rule
- * already points to the Friday after that.
+ * projection.
  */
 export type UpcomingTournament = {
   /** Stable React key. Distinct prefix per kind so projections re-key safely if the admin shifts the rule. */
   key: string;
   /** Display name from the owning template ("Friday Felt League", "Bluff & Buffoons", etc). */
   templateName: string;
-  /**
-   * Free-form location string from `tournament_templates.location`
-   * ("Travis's basement", "VFW hall", etc). Null when the template
-   * was created before location was a thing.
-   */
+  /** Free-form location string from `tournament_templates.location`. */
   location: string | null;
   /**
-   * ISO timestamp for materialized rows (UTC time), or `YYYY-MM-DD`
-   * for projected rows. The renderer reads `dateOnly` to decide
-   * whether to format the time-of-day.
+   * ISO timestamp suitable for `new Date(iso)`. For materialized rows
+   * this is the UTC `scheduled_at`. For projected rows: a true UTC
+   * instant when start_time+start_timezone are set, or a local-noon
+   * anchor (`YYYY-MM-DDT12:00:00`, no zone suffix) when only the
+   * date is known. The local-noon anchor sidesteps the off-by-one
+   * bug where `new Date("2026-05-15")` parses as midnight UTC and
+   * formats as "May 14" in any zone west of UTC.
    */
   iso: string | null;
-  /** True for projected rows where we only know the date, not the time. */
+  /** True when only the calendar date is known (no time-of-day). */
   dateOnly: boolean;
+  /**
+   * Template's IANA timezone, when one was configured. Renderers use
+   * it to format the time-of-day in the venue's zone (so "7 PM CDT"
+   * stays "7 PM CDT" regardless of the viewer's local zone) and to
+   * surface the short timezone name ("CDT") next to the time.
+   */
+  timezone: string | null;
   /** Where to link on the admin dashboard. Null on the public landing. */
   href: string | null;
-  /** Distinguishes scheduled tournament vs recurrence projection (used by callers, not currently rendered). */
+  /** Distinguishes scheduled tournament vs recurrence projection. */
   kind: "scheduled" | "projected";
 };
 
 export type FetchUpcomingOpts = {
   /**
    * When true, every row carries an `href` for the admin dashboard.
-   * Materialized rows link to `/admin/tournaments/[id]` (where the
-   * existing detail page handles edit + add-players + start);
-   * projected rows link to the template's Schedule tab so the admin
-   * can move/cancel that occurrence.
+   * Materialized rows link to `/admin/tournaments/[id]`; projected
+   * rows link to the template's Schedule tab.
    */
   adminLinks?: boolean;
   /** Hard cap on rows returned (default 10). */
@@ -71,8 +81,8 @@ export type FetchUpcomingOpts = {
 };
 
 /**
- * Build the unified upcoming-tournaments list. See the type doc above
- * for the data sources and dedupe rules.
+ * Build the unified upcoming-tournaments list. See the type doc
+ * above for the data sources and dedupe rules.
  */
 export async function fetchUpcomingTournaments(
   supabase: SupabaseClient<Database>,
@@ -82,11 +92,12 @@ export async function fetchUpcomingTournaments(
   const adminLinks = opts.adminLinks ?? false;
   const now = opts.now ?? new Date();
 
-  // 1. Materialized scheduled tournaments.
+  // 1. Materialized scheduled tournaments. Joined to the template so
+  //    we can show the venue zone next to the time.
   const { data: scheduledData } = await supabase
     .from("tournaments")
     .select(
-      "id, scheduled_at, template_id, template:tournament_templates(id, name, location)",
+      "id, scheduled_at, template_id, template:tournament_templates(id, name, location, start_timezone)",
     )
     .eq("status", "scheduled")
     .is("finished_at", null);
@@ -94,7 +105,12 @@ export async function fetchUpcomingTournaments(
   const materialized: UpcomingTournament[] = (scheduledData ?? []).map(
     (row) => {
       const template = row.template as
-        | { id?: string; name?: string; location?: string | null }
+        | {
+            id?: string;
+            name?: string;
+            location?: string | null;
+            start_timezone?: string | null;
+          }
         | null;
       return {
         key: `t:${row.id}`,
@@ -102,29 +118,29 @@ export async function fetchUpcomingTournaments(
         location: template?.location ?? null,
         iso: row.scheduled_at,
         dateOnly: false,
+        timezone: template?.start_timezone ?? null,
         href: adminLinks ? `/admin/tournaments/${row.id}` : null,
         kind: "scheduled",
       };
     },
   );
 
-  // 2. Projected recurrences. Pull every template + its recurrence
-  //    rule, then ask the canonical resolver for the next-night date
-  //    (which honors any schedule_overrides — same code path the
-  //    /admin/settings list uses, so the two views stay consistent).
+  // 2. Projected recurrences.
   const { data: templatesData } = await supabase
     .from("tournament_templates")
-    .select("id, name, location, recurrence_rule");
+    .select(
+      "id, name, location, recurrence_rule, start_time, start_timezone",
+    );
 
-  // Build "this template already has a materialized tournament on
-  // this calendar date" set so the projection doesn't double-up the
-  // same event. Compare by date-only because scheduled_at is a
-  // timestamp and the projection only has a date.
+  // "This template already has a materialized scheduled tournament
+  // on this calendar date" set so a projection doesn't double-up the
+  // same event.
   const materializedByTemplateDate = new Set<string>();
   for (const row of scheduledData ?? []) {
     if (!row.template_id || !row.scheduled_at) continue;
-    const dateOnly = row.scheduled_at.slice(0, 10); // ISO YYYY-MM-DD prefix
-    materializedByTemplateDate.add(`${row.template_id}:${dateOnly}`);
+    materializedByTemplateDate.add(
+      `${row.template_id}:${row.scheduled_at.slice(0, 10)}`,
+    );
   }
 
   const projected: UpcomingTournament[] = [];
@@ -138,26 +154,63 @@ export async function fetchUpcomingTournaments(
     if (next.kind !== "ok") continue;
     const isoDate = toIsoDate(next.next.effectiveDate);
     if (materializedByTemplateDate.has(`${t.id}:${isoDate}`)) continue;
+
+    // Compute the iso the homepage should render. Three cases:
+    //
+    // - Time + zone present: a true UTC timestamp for that
+    //   occurrence's start. Lets us show "Fri, May 15, 7:00 PM CDT"
+    //   in any viewer's zone.
+    //
+    // - No time set: anchor at local noon (no Z suffix) so JS
+    //   parses it as the viewer's local clock — keeps the calendar
+    //   date stable everywhere instead of bouncing to "May 14" for
+    //   anyone west of UTC.
+    //
+    // - Time set but invalid zone (shouldn't happen — DB constraint
+    //   plus action validation — but defensive): treat as date-only.
+    let iso: string;
+    let dateOnly: boolean;
+    let timezone: string | null = null;
+    if (
+      t.start_time &&
+      t.start_timezone &&
+      isValidHhMm(t.start_time) &&
+      isValidTimezone(t.start_timezone)
+    ) {
+      const [hour, minute] = splitHhMm(t.start_time);
+      const utc = zonedWallClockToUtc(
+        next.next.effectiveDate.getFullYear(),
+        next.next.effectiveDate.getMonth() + 1,
+        next.next.effectiveDate.getDate(),
+        hour,
+        minute,
+        t.start_timezone,
+      );
+      iso = utc.toISOString();
+      dateOnly = false;
+      timezone = t.start_timezone;
+    } else {
+      iso = `${isoDate}T12:00:00`;
+      dateOnly = true;
+    }
+
     projected.push({
       key: `proj:${t.id}:${isoDate}`,
       templateName: t.name,
       location: t.location ?? null,
-      iso: isoDate,
-      dateOnly: true,
+      iso,
+      dateOnly,
+      timezone,
       href: adminLinks ? `/admin/templates/${t.id}?tab=schedule` : null,
       kind: "projected",
     });
   }
 
-  // 3. Merge + sort. Compare by ISO prefix so date-only projected
-  //    rows interleave correctly with timestamped materialized rows
-  //    ("2026-05-15" < "2026-05-15T19:00:00Z" — both sort to the
-  //    same calendar day, with the projected one first because the
-  //    string prefix is shorter).
+  // 3. Merge + sort.
   const all = [...materialized, ...projected];
   all.sort((a, b) => {
     if (a.iso == null && b.iso == null) return 0;
-    if (a.iso == null) return 1; // null/TBD last
+    if (a.iso == null) return 1;
     if (b.iso == null) return -1;
     return a.iso.localeCompare(b.iso);
   });

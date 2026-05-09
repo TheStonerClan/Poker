@@ -289,7 +289,11 @@ function UpcomingAdminSection({
                   ) : null}
                 </p>
                 <p className="font-mono text-xs tabular-nums text-fg/70">
-                  <UpcomingDate iso={u.iso} dateOnly={u.dateOnly} />
+                  <UpcomingDate
+                    iso={u.iso}
+                    dateOnly={u.dateOnly}
+                    timezone={u.timezone}
+                  />
                 </p>
               </div>
               {u.location ? (
@@ -324,15 +328,18 @@ function UpcomingAdminSection({
 
 /**
  * Shared date renderer — see the matching helper on the public
- * landing page (app/page.tsx). Time-of-day is dropped for projected
- * (recurrence-derived) rows since those only carry a calendar date.
+ * landing page (app/page.tsx). When the template has a timezone we
+ * format in the venue's zone with a short TZ abbreviation; date-only
+ * projections drop the time entirely.
  */
 function UpcomingDate({
   iso,
   dateOnly,
+  timezone,
 }: {
   iso: string | null;
   dateOnly: boolean;
+  timezone: string | null;
 }) {
   if (!iso) {
     return (
@@ -341,22 +348,18 @@ function UpcomingDate({
       </span>
     );
   }
-  return (
-    <LocalDateTime
-      iso={iso}
-      options={
-        dateOnly
-          ? { weekday: "short", month: "short", day: "numeric" }
-          : {
-              weekday: "short",
-              month: "short",
-              day: "numeric",
-              hour: "numeric",
-              minute: "2-digit",
-            }
-      }
-    />
-  );
+  const options: Intl.DateTimeFormatOptions = dateOnly
+    ? { weekday: "short", month: "short", day: "numeric" }
+    : {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+        timeZoneName: "short",
+      };
+  if (timezone) options.timeZone = timezone;
+  return <LocalDateTime iso={iso} options={options} />;
 }
 
 export const dynamic = "force-dynamic";
