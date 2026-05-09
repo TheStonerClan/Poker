@@ -14,6 +14,14 @@ export type ChipAccountingInputs = {
    * Chips granted per add-on (seed: 500). Each add-on adds this to the pool.
    */
   addOnChips: number;
+  /**
+   * Net chip delta from approved color-up exchanges. When the dealer
+   * rounds 23 small chips up to 25 of a higher denom, the player gains
+   * 2 chips and so does the table-wide pool. Sum of `net_change` across
+   * all approved color_up_requests for this tournament. Defaults to 0
+   * when the caller hasn't queried color-ups (older callers, tests).
+   */
+  colorUpDelta?: number;
 };
 
 export function aggregatePlayers(
@@ -72,7 +80,8 @@ export function aggregatePlayers(
   const totalChips = chipsCfg
     ? entries * chipsCfg.startingStack +
       reEntries * chipsCfg.rebuyChips +
-      addOns * chipsCfg.addOnChips
+      addOns * chipsCfg.addOnChips +
+      (chipsCfg.colorUpDelta ?? 0)
     : activeChipsSum;
 
   const averageChips =

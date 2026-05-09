@@ -31,11 +31,14 @@ import type {
   TournamentRow,
 } from "@/lib/tv/types";
 
+type ColorUpGain = { player_id: string; net_change: number };
+
 type Props = {
   tournamentId: string;
   initialTournament: TournamentRow;
   initialPlayers: TournamentPlayerWithName[];
   initialEvents?: TournamentEvent[];
+  initialColorUpGains?: ColorUpGain[];
   playSessionBaseUrl: string;
 };
 
@@ -50,11 +53,14 @@ export default function TvDisplay({
   initialTournament,
   initialPlayers,
   initialEvents = [],
+  initialColorUpGains = [],
   playSessionBaseUrl,
 }: Props) {
   const [tournament, setTournament] = useState<TournamentRow>(initialTournament);
   const [players, setPlayers] = useState<TournamentPlayerWithName[]>(initialPlayers);
   const [events, setEvents] = useState<TournamentEvent[]>(initialEvents);
+  const [colorUpGains, setColorUpGains] =
+    useState<ColorUpGain[]>(initialColorUpGains);
 
   const onTournament = useCallback((row: Record<string, unknown>) => {
     setTournament((prev) => ({ ...prev, ...(row as TournamentRow) }));
@@ -84,9 +90,11 @@ export default function TvDisplay({
       const json = (await res.json()) as {
         players?: TournamentPlayerWithName[];
         events?: TournamentEvent[];
+        colorUpGains?: ColorUpGain[];
       };
       if (json.players) setPlayers(json.players);
       if (json.events) setEvents(json.events);
+      if (json.colorUpGains) setColorUpGains(json.colorUpGains);
     } catch {
       // Network blip during a refresh — keep the previous snapshot. The
       // realtime channel or the next 5s drift sync will retry.
@@ -113,14 +121,19 @@ export default function TvDisplay({
 
   const buyback = (tournament.buyback_config_snapshot ?? {}) as BuybackConfig;
   const buybackPrice = buyback.price ?? tournament.rebuy_price_snapshot ?? 0;
+  // Sum of approved color-up `net_change`s. A round-up exchange (23 →
+  // 25) contributes +2 to the pool. Threaded into the chips total so
+  // the TV reflects the gain seconds after the admin approves.
+  const colorUpDelta = colorUpGains.reduce((s, g) => s + g.net_change, 0);
   const chipsCfg = {
     // Conservation of chips: total in play = entries * starting_stack +
-    // rebuys * rebuyChips + addOns * addOnChips. Without these inputs the
-    // total drops every time someone busts, which doesn't match what's
-    // actually on the table.
+    // rebuys * rebuyChips + addOns * addOnChips + color-up rounding
+    // delta. Without these inputs the total drops every time someone
+    // busts, which doesn't match what's actually on the table.
     startingStack: tournament.starting_stack_snapshot ?? 0,
     rebuyChips: buyback.rebuyChips ?? tournament.rebuy_chips_snapshot ?? 0,
     addOnChips: buyback.addOnChips ?? 0,
+    colorUpDelta,
   };
   const counts = aggregatePlayers(players, chipsCfg);
   const totalBuybacks = counts.reEntries + counts.addOns;
@@ -137,6 +150,7 @@ export default function TvDisplay({
     rows: players,
     tablesConfig,
     chipsCfg,
+    colorUpGains,
   });
 
   const prizeRules = tournament.prize_rules_snapshot as unknown as PrizeRules;

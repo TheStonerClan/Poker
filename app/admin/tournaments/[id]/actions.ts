@@ -569,10 +569,48 @@ export async function decideColorUp(input: {
 
   const { data: req } = await supabase
     .from("color_up_requests")
-    .select("tournament_id")
+    .select("tournament_id, player_id, submitted_chips, exchange_for_chips")
     .eq("id", requestId)
     .maybeSingle();
   if (!req) throw new Error("Request not found");
+
+  // Pull the rounding delta out of the player's submission. The player
+  // page stores the exchange as { total, chips, net_change }, where
+  // net_change is (newTotal - submittedTotal): positive when the
+  // exchange rounded up (player gains chips), zero on exact swaps,
+  // negative on round-down. This is what we apply to current_chips on
+  // approve so the per-player display + the tournament-wide chip total
+  // both reflect the gain.
+  const efc = req.exchange_for_chips as {
+    total?: number;
+    net_change?: number;
+  } | null;
+  const sc = req.submitted_chips as { total?: number } | null;
+  const netChange =
+    efc && typeof efc.net_change === "number" ? efc.net_change : 0;
+  const submittedTotal =
+    sc && typeof sc.total === "number" ? sc.total : null;
+  const newTotal = efc && typeof efc.total === "number" ? efc.total : null;
+
+  // On approve, bump the player's current_chips by net_change so a
+  // round-up exchange ($23 → $25) shows the +$2 in their stack and
+  // contributes to the pool. On deny, leave current_chips alone.
+  if (decision === "approved" && netChange !== 0 && req.player_id) {
+    const { data: tp } = await supabase
+      .from("tournament_players")
+      .select("id, current_chips")
+      .eq("tournament_id", req.tournament_id)
+      .eq("player_id", req.player_id)
+      .maybeSingle();
+    if (tp) {
+      const next = (tp.current_chips ?? 0) + netChange;
+      const { error: chipErr } = await supabase
+        .from("tournament_players")
+        .update({ current_chips: Math.max(0, next) })
+        .eq("id", tp.id);
+      if (chipErr) throw new Error(chipErr.message);
+    }
+  }
 
   const { error } = await supabase
     .from("color_up_requests")
@@ -586,7 +624,14 @@ export async function decideColorUp(input: {
   await supabase.from("tournament_events").insert({
     tournament_id: req.tournament_id,
     type: "color_up",
-    payload: { request_id: requestId, decision },
+    payload: {
+      request_id: requestId,
+      decision,
+      player_id: req.player_id,
+      submitted_total: submittedTotal,
+      new_total: newTotal,
+      net_change: netChange,
+    },
   });
 
   await refresh(req.tournament_id);

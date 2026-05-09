@@ -13,13 +13,34 @@ type Request = {
 };
 
 function summarize(value: unknown): string {
-  if (!Array.isArray(value)) return "—";
-  return value
-    .map((v: { color?: string; value?: number; count?: number }) => {
-      const head = v.color ?? `${v.value ?? ""}`;
+  if (!value || typeof value !== "object") return "—";
+  // The /play action stores the request as `{ total: number, chips: [...] }`
+  // (wrapped object), but earlier shapes wrote a raw chip array. Handle
+  // both: peel off `chips` if present, otherwise treat the whole value as
+  // the array. Without this peel the inbox renders "—" for every request.
+  const chips =
+    "chips" in value
+      ? (value as { chips?: unknown }).chips
+      : value;
+  const total =
+    "total" in value
+      ? (value as { total?: number }).total
+      : undefined;
+  if (!Array.isArray(chips)) return total != null ? `$${total}` : "—";
+
+  const summary = chips
+    .filter((v): v is { value?: number; count?: number; color?: string } =>
+      typeof v === "object" && v !== null,
+    )
+    .map((v) => {
+      const head = typeof v.value === "number" ? `$${v.value}` : (v.color ?? "?");
       return `${v.count ?? 0}× ${head}`;
     })
+    .filter((s) => !s.startsWith("0×"))
     .join(", ");
+
+  if (!summary) return total != null ? `$${total}` : "—";
+  return total != null ? `${summary} (= $${total})` : summary;
 }
 
 export function ColorUpInbox({ requests }: { requests: Request[] }) {

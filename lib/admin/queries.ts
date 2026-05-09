@@ -77,6 +77,35 @@ export async function getPendingColorUpRequests(
   >;
 }
 
+/**
+ * Per-player net chip deltas from APPROVED color-up exchanges. When a
+ * player rounds 23 small chips up to 25 large, `net_change` = +2 — that
+ * delta needs to be added to both the player's stack (handled in
+ * `decideColorUp`) and to the tournament-wide total chips formula
+ * (handled by aggregators that take a `colorUpDelta`/`colorUpGains`).
+ *
+ * One row per request, even if a player has multiple approved
+ * color-ups; aggregators sum them per-player as needed.
+ */
+export async function getApprovedColorUpGains(
+  tournamentId: string,
+): Promise<Array<{ player_id: string; net_change: number }>> {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("color_up_requests")
+    .select("player_id, exchange_for_chips")
+    .eq("tournament_id", tournamentId)
+    .eq("status", "approved");
+  return (data ?? [])
+    .map((row) => {
+      const efc = row.exchange_for_chips as { net_change?: number } | null;
+      const delta =
+        efc && typeof efc.net_change === "number" ? efc.net_change : 0;
+      return { player_id: row.player_id ?? "", net_change: delta };
+    })
+    .filter((g) => g.player_id !== "" && g.net_change !== 0);
+}
+
 export const getTemplates = cache(async (): Promise<TournamentTemplate[]> => {
   const supabase = await createClient();
   const { data } = await supabase
