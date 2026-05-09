@@ -38,7 +38,13 @@ export default async function LiveTournamentPage({
   const nxt = nextLevel(tournament);
   const inPlay = roster.filter((r) => !r.busted_at_time);
   const out = roster.filter((r) => r.busted_at_time);
-  const buybacks = roster.filter((r) => r.buyback_used).length;
+  // Total buybacks = rebuys + add-ons across all players (counters added
+  // in 0003 to support tokensPerPlayer > 1). A single roster row may
+  // contribute multiple paid entries.
+  const buybacks = roster.reduce(
+    (s, r) => s + (r.rebuys_used ?? 0) + (r.addons_used ?? 0),
+    0,
+  );
 
   const payouts = computePayouts(
     tournament.prize_rules_snapshot as Parameters<typeof computePayouts>[0],

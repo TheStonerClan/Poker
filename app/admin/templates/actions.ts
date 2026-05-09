@@ -45,6 +45,10 @@ export async function updateTemplateBasics(
 
 const RebuySchema = z.object({
   templateId: z.uuid(),
+  // tokensPerPlayer is the per-player buyback budget. 1 keeps the legacy
+  // "one token, usable as either rebuy or addon" rule. Higher allows e.g.
+  // 2 rebuys, or rebuy + addon. Capped at 5 to catch typos.
+  tokens_per_player: z.coerce.number().int().min(1).max(5),
   rebuy_chips: z.coerce.number().int().min(0),
   rebuy_price: z.coerce.number().int().min(0),
   rebuy_through_level: z.coerce.number().int().min(0),
@@ -59,6 +63,7 @@ export async function updateTemplateBuyback(
   await requireAdmin();
   const parsed = RebuySchema.safeParse({
     templateId: formData.get("templateId"),
+    tokens_per_player: formData.get("tokens_per_player") ?? 1,
     rebuy_chips: formData.get("rebuy_chips") ?? 0,
     rebuy_price: formData.get("rebuy_price") ?? 0,
     rebuy_through_level: formData.get("rebuy_through_level") ?? 0,
@@ -70,7 +75,7 @@ export async function updateTemplateBuyback(
   }
   const supabase = await createClient();
   const buybackConfig = {
-    tokensPerPlayer: 1,
+    tokensPerPlayer: parsed.data.tokens_per_player,
     price: parsed.data.rebuy_price,
     rebuyChips: parsed.data.rebuy_chips,
     rebuyAllowedThroughLevel: parsed.data.rebuy_through_level,

@@ -9,8 +9,25 @@ export function aggregatePlayers(
   let activePlayers = 0;
 
   for (const r of rows) {
-    if (r.buyback_used && r.buyback_used_as === "rebuy") reEntries += 1;
-    if (r.buyback_used && r.buyback_used_as === "addon") addOns += 1;
+    // Prefer the per-row counters when present (added in 0003 to support
+    // configurable rebuy limits — a player can rebuy AND addon, or rebuy
+    // multiple times if tokensPerPlayer > 1). Fall back to the legacy
+    // most-recent-type fields when the counters are zero so historical
+    // rows without backfill still aggregate correctly.
+    const rowRebuys =
+      typeof r.rebuys_used === "number" && r.rebuys_used > 0
+        ? r.rebuys_used
+        : r.buyback_used && r.buyback_used_as === "rebuy"
+          ? 1
+          : 0;
+    const rowAddOns =
+      typeof r.addons_used === "number" && r.addons_used > 0
+        ? r.addons_used
+        : r.buyback_used && r.buyback_used_as === "addon"
+          ? 1
+          : 0;
+    reEntries += rowRebuys;
+    addOns += rowAddOns;
     if (r.busted_at_time == null) {
       activePlayers += 1;
       activeChips += r.current_chips ?? 0;

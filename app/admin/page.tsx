@@ -27,7 +27,14 @@ export default async function AdminDashboardPage() {
   ]);
 
   const inPlay = roster.filter((r) => !r.busted_at_time);
-  const buybacks = roster.filter((r) => r.buyback_used).length;
+  // Count actual buybacks (rebuys + addons) using the per-row counters
+  // added in 0003. With tokensPerPlayer>1 a single roster row can carry
+  // multiple paid entries, so a `filter(buyback_used).length` would
+  // undercount the prize-pool contribution.
+  const buybacks = roster.reduce(
+    (s, r) => s + (r.rebuys_used ?? 0) + (r.addons_used ?? 0),
+    0,
+  );
 
   const payouts = computePayouts(
     tournament.prize_rules_snapshot as Parameters<typeof computePayouts>[0],

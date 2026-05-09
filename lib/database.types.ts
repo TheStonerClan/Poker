@@ -263,6 +263,7 @@ export type Database = {
       }
       tournament_players: {
         Row: {
+          addons_used: number
           busted_at_level: number | null
           busted_at_time: string | null
           buyback_used: boolean
@@ -277,11 +278,13 @@ export type Database = {
           id: string
           payout_amount: number | null
           player_id: string
+          rebuys_used: number
           seat_number: number | null
           tournament_id: string
           updated_at: string
         }
         Insert: {
+          addons_used?: number
           busted_at_level?: number | null
           busted_at_time?: string | null
           buyback_used?: boolean
@@ -296,11 +299,13 @@ export type Database = {
           id?: string
           payout_amount?: number | null
           player_id: string
+          rebuys_used?: number
           seat_number?: number | null
           tournament_id: string
           updated_at?: string
         }
         Update: {
+          addons_used?: number
           busted_at_level?: number | null
           busted_at_time?: string | null
           buyback_used?: boolean
@@ -315,6 +320,7 @@ export type Database = {
           id?: string
           payout_amount?: number | null
           player_id?: string
+          rebuys_used?: number
           seat_number?: number | null
           tournament_id?: string
           updated_at?: string
