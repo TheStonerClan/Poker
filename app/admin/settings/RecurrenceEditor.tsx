@@ -33,6 +33,36 @@ const WEEKDAYS: Array<{ value: Weekday; label: string }> = [
   { value: 6, label: "Sat" },
 ];
 
+/**
+ * Curated short list of timezones — covers the US poker-night
+ * universe plus a few common international zones for traveling
+ * players. The admin can pick anything in this list. If their detected
+ * zone isn't here, we slot it in as the first option so they can
+ * still keep the default; full IANA list isn't worth the UI weight.
+ */
+const COMMON_TZS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: "America/Los_Angeles", label: "Los Angeles (PT)" },
+  { value: "America/Denver", label: "Denver (MT)" },
+  { value: "America/Phoenix", label: "Phoenix (AZ, no DST)" },
+  { value: "America/Chicago", label: "Chicago (CT)" },
+  { value: "America/New_York", label: "New York (ET)" },
+  { value: "America/Anchorage", label: "Anchorage (AK)" },
+  { value: "Pacific/Honolulu", label: "Honolulu (HI)" },
+  { value: "Europe/London", label: "London (UK)" },
+  { value: "Europe/Berlin", label: "Berlin / Paris" },
+  { value: "Asia/Tokyo", label: "Tokyo" },
+  { value: "Australia/Sydney", label: "Sydney" },
+  { value: "UTC", label: "UTC" },
+];
+
+function detectLocalTz(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
+  }
+}
+
 function parseRule(raw: string | null | undefined): RecurrenceRule | null {
   if (!raw) return null;
   try {
@@ -50,14 +80,22 @@ function parseRule(raw: string | null | undefined): RecurrenceRule | null {
   return null;
 }
 
+function isValidHhMm(s: string): boolean {
+  return /^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(s);
+}
+
 export function RecurrenceEditor({
   templateId,
   templateName,
   ruleString,
+  startTime,
+  startTimezone,
 }: {
   templateId: string;
   templateName: string;
   ruleString: string | null;
+  startTime: string | null;
+  startTimezone: string | null;
 }) {
   const initial = useMemo(() => parseRule(ruleString), [ruleString]);
   const [enabled, setEnabled] = useState(initial != null);
@@ -67,6 +105,27 @@ export function RecurrenceEditor({
   const [weekday, setWeekday] = useState<Weekday>(
     initial?.kind === "nthWeekdayOfMonth" ? initial.weekday : 5,
   );
+
+  // Time-of-day controls. Default to whatever was saved; if nothing
+  // saved, leave both empty so an admin who doesn't care about a
+  // start time can keep the existing date-only behavior.
+  const [time, setTime] = useState<string>(startTime ?? "");
+  // The timezone select defaults to whatever was saved, falling back
+  // to the admin's detected local zone on the first client render.
+  // We can't seed `useState` with `Intl.DateTimeFormat(...)` directly
+  // because that'd run on the server (UTC) and disagree with the
+  // hydrated value. Instead: stay empty through SSR, then on the
+  // first client render, compare-and-set during render — the
+  // React-blessed pattern that doesn't trip
+  // react-hooks/set-state-in-effect (see
+  // https://react.dev/learn/you-might-not-need-an-effect).
+  const [tz, setTz] = useState<string>(startTimezone ?? "");
+  const [tzDetected, setTzDetected] = useState(false);
+  if (!tzDetected && typeof window !== "undefined") {
+    setTzDetected(true);
+    if (!tz) setTz(detectLocalTz());
+  }
+
   const [pending, start] = useTransition();
   const [status, setStatus] = useState<{
     kind: "ok" | "error";
@@ -78,15 +137,43 @@ export function RecurrenceEditor({
     : null;
   const previewRule: RecurrenceRule | null = rule;
 
+  // The timezone select can offer the curated list plus a slot for
+  // the admin's detected zone if it isn't in the curation.
+  const tzOptions = useMemo(() => {
+    const list = [...COMMON_TZS];
+    const detected = detectLocalTz();
+    if (detected && !list.some((o) => o.value === detected)) {
+      list.unshift({ value: detected, label: `${detected} (your zone)` });
+    }
+    if (tz && !list.some((o) => o.value === tz)) {
+      list.unshift({ value: tz, label: tz });
+    }
+    return list;
+  }, [tz]);
+
+  // Time + timezone validation. The save button is disabled when the
+  // pair isn't valid so we don't fire an action that the server has
+  // to reject.
+  const timeTouched = time.length > 0;
+  const timeValid = !timeTouched || isValidHhMm(time);
+  const tzValid = !timeTouched || tz.length > 0;
+  const canSave = !pending && timeValid && tzValid;
+
   let nextStr = "—";
   if (previewRule) {
     try {
-      nextStr = nextOccurrence(previewRule, new Date()).toLocaleDateString(undefined, {
+      const next = nextOccurrence(previewRule, new Date());
+      nextStr = next.toLocaleDateString(undefined, {
         weekday: "short",
         month: "short",
         day: "numeric",
         year: "numeric",
       });
+      if (timeTouched && timeValid && tzValid) {
+        // Append the wall-clock time so the admin sees what the
+        // homepage will show before they click save.
+        nextStr += ` at ${time}`;
+      }
     } catch {
       nextStr = "—";
     }
@@ -95,7 +182,12 @@ export function RecurrenceEditor({
   function save() {
     setStatus(null);
     start(async () => {
-      const res = await updateRecurrence({ templateId, rule });
+      const res = await updateRecurrence({
+        templateId,
+        rule,
+        startTime: timeTouched ? time : null,
+        startTimezone: timeTouched ? tz : null,
+      });
       setStatus(
         res.status === "ok"
           ? { kind: "ok", message: "Saved." }
@@ -158,9 +250,54 @@ export function RecurrenceEditor({
               </select>
             </label>
           </div>
+
+          {/* Time + timezone — optional. Leaving Time empty preserves
+              the legacy date-only behavior; setting it pairs with a
+              required timezone (defaults to your local). */}
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-[120px_1fr]">
+            <label className="flex flex-col gap-1.5">
+              <span className="text-[10px] font-semibold uppercase tracking-widest text-fg/60">
+                Time (24h)
+              </span>
+              <input
+                type="time"
+                value={time}
+                onChange={(e) => setTime(e.target.value)}
+                placeholder="--:--"
+                className="min-h-[44px] rounded-md border border-fg/15 bg-bg px-2 text-base text-fg focus:border-gold focus:outline-none"
+              />
+            </label>
+            <label className="flex flex-col gap-1.5">
+              <span className="text-[10px] font-semibold uppercase tracking-widest text-fg/60">
+                Timezone
+              </span>
+              <select
+                value={tz}
+                onChange={(e) => setTz(e.target.value)}
+                disabled={!timeTouched}
+                className="min-h-[44px] rounded-md border border-fg/15 bg-bg px-2 text-base text-fg focus:border-gold focus:outline-none disabled:opacity-40"
+              >
+                {tzOptions.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          {!timeValid ? (
+            <p className="text-xs text-danger">
+              Time must be HH:MM (24-hour), e.g. 19:00.
+            </p>
+          ) : null}
+
           <p className="text-xs text-fg/60">
             <span className="text-fg/80">{describe(previewRule!)}</span>. Next:{" "}
-            <span className="text-fg/80">{nextStr}</span>.
+            <span className="text-fg/80">{nextStr}</span>
+            {timeTouched && timeValid && tzValid ? (
+              <span className="ml-1 text-fg/50">({tz})</span>
+            ) : null}
+            .
           </p>
         </>
       ) : (
@@ -183,7 +320,7 @@ export function RecurrenceEditor({
 
       <button
         type="button"
-        disabled={pending}
+        disabled={!canSave}
         onClick={save}
         className="h-12 min-h-[44px] rounded-md bg-gold text-sm font-semibold text-bg disabled:opacity-50"
       >

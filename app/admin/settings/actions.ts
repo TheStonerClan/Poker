@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import { requireAdmin } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
+import { isValidTimezone } from "@/lib/schedule/zoned-time";
 
 const RuleSchema = z.discriminatedUnion("kind", [
   z.object({
@@ -32,14 +33,41 @@ const RuleSchema = z.discriminatedUnion("kind", [
   }),
 ]);
 
-const UpdateRecurrenceSchema = z.object({
-  templateId: z.uuid(),
-  rule: RuleSchema.nullable(),
-});
+// HH:MM 24-hour. Mirrors the DB CHECK constraint from migration 0008.
+const HhMmSchema = z
+  .string()
+  .regex(/^([01][0-9]|2[0-3]):[0-5][0-9]$/, "Time must be HH:MM (24h)");
+
+// IANA zone, validated via Intl.DateTimeFormat at runtime — Zod can't
+// hold the full list. Returns a friendly error so the UI shows it.
+const TimezoneSchema = z
+  .string()
+  .min(1)
+  .refine(isValidTimezone, "Unknown timezone");
+
+const UpdateRecurrenceSchema = z
+  .object({
+    templateId: z.uuid(),
+    rule: RuleSchema.nullable(),
+    startTime: HhMmSchema.nullable(),
+    startTimezone: TimezoneSchema.nullable(),
+  })
+  .refine(
+    (v) =>
+      (v.startTime === null && v.startTimezone === null) ||
+      (v.startTime !== null && v.startTimezone !== null),
+    {
+      message:
+        "Start time and timezone must be set together (or both empty).",
+      path: ["startTime"],
+    },
+  );
 
 export async function updateRecurrence(input: {
   templateId: string;
   rule: z.infer<typeof RuleSchema> | null;
+  startTime: string | null;
+  startTimezone: string | null;
 }): Promise<{ status: "ok" | "error"; message?: string }> {
   await requireAdmin();
   const parsed = UpdateRecurrenceSchema.safeParse(input);
@@ -66,7 +94,11 @@ export async function updateRecurrence(input: {
 
   const { error } = await supabase
     .from("tournament_templates")
-    .update({ recurrence_rule: value })
+    .update({
+      recurrence_rule: value,
+      start_time: parsed.data.startTime,
+      start_timezone: parsed.data.startTimezone,
+    })
     .eq("id", parsed.data.templateId);
   if (error) return { status: "error", message: error.message };
 

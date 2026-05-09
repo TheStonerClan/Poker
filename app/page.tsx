@@ -164,7 +164,11 @@ function UpcomingSection({ upcoming }: { upcoming: UpcomingTournament[] }) {
               ) : null}
             </div>
             <p className="font-mono text-xs tabular-nums text-fg/70">
-              <UpcomingDate iso={u.iso} dateOnly={u.dateOnly} />
+              <UpcomingDate
+                iso={u.iso}
+                dateOnly={u.dateOnly}
+                timezone={u.timezone}
+              />
             </p>
           </li>
         ))}
@@ -176,18 +180,23 @@ function UpcomingSection({ upcoming }: { upcoming: UpcomingTournament[] }) {
 /**
  * Date renderer shared between materialized and projected rows.
  *
- * Materialized rows (`dateOnly: false`) carry a precise timestamp —
- * format with the local time-of-day so guests can see "Fri, May 15
- * at 7:00 PM". Projected rows (`dateOnly: true`) come from a
- * recurrence rule and only have a calendar date — drop the time so
- * we don't render a misleading "12:00 AM" for them.
+ * - `dateOnly`: only the calendar date — drop time-of-day to avoid
+ *   misleading "12:00 AM" output. Calendar date stays stable
+ *   everywhere because the iso is anchored at local-noon
+ *   (`YYYY-MM-DDT12:00:00`, no zone) by the upstream helper.
+ * - `timezone` set: format in the venue's timezone with the short
+ *   TZ abbreviation appended ("Fri, May 15, 7:00 PM CDT") — viewers
+ *   see venue time regardless of their own location.
+ * - Otherwise: viewer's local zone.
  */
 function UpcomingDate({
   iso,
   dateOnly,
+  timezone,
 }: {
   iso: string | null;
   dateOnly: boolean;
+  timezone: string | null;
 }) {
   if (!iso) {
     return (
@@ -196,20 +205,16 @@ function UpcomingDate({
       </span>
     );
   }
-  return (
-    <LocalDateTime
-      iso={iso}
-      options={
-        dateOnly
-          ? { weekday: "short", month: "short", day: "numeric" }
-          : {
-              weekday: "short",
-              month: "short",
-              day: "numeric",
-              hour: "numeric",
-              minute: "2-digit",
-            }
-      }
-    />
-  );
+  const options: Intl.DateTimeFormatOptions = dateOnly
+    ? { weekday: "short", month: "short", day: "numeric" }
+    : {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+        timeZoneName: "short",
+      };
+  if (timezone) options.timeZone = timezone;
+  return <LocalDateTime iso={iso} options={options} />;
 }
