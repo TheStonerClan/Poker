@@ -163,13 +163,13 @@ function UpcomingSection({ upcoming }: { upcoming: UpcomingTournament[] }) {
                 <p className="mt-0.5 text-xs text-fg/55">{u.location}</p>
               ) : null}
             </div>
-            <p className="font-mono text-xs tabular-nums text-fg/70">
+            <div className="font-mono text-xs tabular-nums text-fg/70 sm:text-right">
               <UpcomingDate
                 iso={u.iso}
                 dateOnly={u.dateOnly}
                 timezone={u.timezone}
               />
-            </p>
+            </div>
           </li>
         ))}
       </ul>
@@ -178,16 +178,19 @@ function UpcomingSection({ upcoming }: { upcoming: UpcomingTournament[] }) {
 }
 
 /**
- * Date renderer shared between materialized and projected rows.
+ * Date renderer for the public upcoming list.
  *
- * - `dateOnly`: only the calendar date — drop time-of-day to avoid
- *   misleading "12:00 AM" output. Calendar date stays stable
- *   everywhere because the iso is anchored at local-noon
- *   (`YYYY-MM-DDT12:00:00`, no zone) by the upstream helper.
- * - `timezone` set: format in the venue's timezone with the short
- *   TZ abbreviation appended ("Fri, May 15, 7:00 PM CDT") — viewers
- *   see venue time regardless of their own location.
- * - Otherwise: viewer's local zone.
+ * Renders the calendar date on the first line and the time-of-day +
+ * short timezone on a second line below — the user wanted the time
+ * stacked under the date so each row feels less squished.
+ *
+ * - `dateOnly` (no time saved): only the date line. Calendar date
+ *   stays stable everywhere because the iso is anchored at
+ *   "YYYY-MM-DDT12:00:00" (no zone) by the upstream helper.
+ * - `timezone` set: both lines are formatted in the venue's zone so
+ *   viewers see venue time regardless of their own location, and the
+ *   second line carries the short TZ abbreviation ("7:00 PM CDT").
+ * - Otherwise: viewer's local zone for both lines.
  */
 function UpcomingDate({
   iso,
@@ -205,16 +208,27 @@ function UpcomingDate({
       </span>
     );
   }
-  const options: Intl.DateTimeFormatOptions = dateOnly
-    ? { weekday: "short", month: "short", day: "numeric" }
-    : {
-        weekday: "short",
-        month: "short",
-        day: "numeric",
-        hour: "numeric",
-        minute: "2-digit",
-        timeZoneName: "short",
-      };
-  if (timezone) options.timeZone = timezone;
-  return <LocalDateTime iso={iso} options={options} />;
+  const dateOptions: Intl.DateTimeFormatOptions = {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  };
+  if (timezone) dateOptions.timeZone = timezone;
+  if (dateOnly) {
+    return <LocalDateTime iso={iso} options={dateOptions} />;
+  }
+  const timeOptions: Intl.DateTimeFormatOptions = {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short",
+  };
+  if (timezone) timeOptions.timeZone = timezone;
+  return (
+    <>
+      <LocalDateTime iso={iso} options={dateOptions} />
+      <span className="mt-0.5 block text-[11px] text-fg/55">
+        <LocalDateTime iso={iso} options={timeOptions} />
+      </span>
+    </>
+  );
 }
