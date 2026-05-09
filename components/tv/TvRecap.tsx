@@ -1,3 +1,4 @@
+import TvAutoRefresh from "@/components/tv/TvAutoRefresh";
 import { formatChips, formatMoney } from "@/lib/tv/format";
 import type {
   TournamentPlayerWithName,
@@ -68,6 +69,10 @@ export default function TvRecap({ tournament, players, payouts }: Props) {
 
   return (
     <div className="min-h-screen bg-bg text-fg flex flex-col px-[clamp(1rem,3vw,3rem)] py-[clamp(1rem,2vh,2.5rem)]">
+      {/* Reload every minute so /tv flips back to the live display the
+          moment a new tournament starts (and so the recap eventually
+          falls out when finished_at passes the recap window). */}
+      <TvAutoRefresh intervalSec={60} />
       <header className="flex flex-col items-center gap-2 text-center">
         <span className="text-gold text-label uppercase tracking-[0.4em] text-[clamp(0.75rem,1.2vw,1.1rem)] font-semibold">
           Tournament complete
