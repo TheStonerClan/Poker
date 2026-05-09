@@ -158,6 +158,7 @@ export default async function TvPage() {
           tournament_id,
           player_id,
           seat_number,
+          table_number,
           current_chips,
           buyback_used,
           buyback_used_as,
@@ -171,6 +172,8 @@ export default async function TvPage() {
           claimed_at,
           created_at,
           updated_at,
+          rebuys_used,
+          addons_used,
           players ( id, name )
         `,
       )
