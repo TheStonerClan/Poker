@@ -19,6 +19,8 @@ import { createClient } from "@/lib/supabase/server";
 import { computePayouts } from "prize-math";
 
 import {
+  aggregateByTable,
+  canMerge,
   groupByTable,
   resolveTablesConfig,
   TABLE_COLOR_CSS,
@@ -29,6 +31,7 @@ import { PlayerGrid } from "./_components/PlayerGrid";
 import { ColorUpInbox } from "./_components/ColorUpInbox";
 import { FinalizeButton } from "./_components/FinalizeButton";
 import { RerandomizeButton } from "./_components/RerandomizeButton";
+import { TableActions } from "./_components/TableActions";
 
 export const dynamic = "force-dynamic";
 
@@ -123,6 +126,58 @@ export default async function LiveTournamentPage({
         </section>
 
         <LevelControls tournament={tournament} />
+
+        {(tournament.status === "running" || tournament.status === "paused") &&
+        tournament.num_tables &&
+        tournament.num_tables > 1
+          ? (() => {
+              const tablesCfg = resolveTablesConfig({
+                tablesConfig: tournament.tables_config,
+                numTables: tournament.num_tables,
+                maxSeatsPerTable: tournament.max_seats_per_table,
+              });
+              const buyback = (tournament.buyback_config_snapshot ?? {}) as {
+                rebuyChips?: number;
+                addOnChips?: number;
+              };
+              const stats = aggregateByTable({
+                rows: roster.map((r) => ({
+                  table_number: r.table_number,
+                  player_id: r.player_id,
+                  current_chips: r.current_chips,
+                  busted_at_time: r.busted_at_time,
+                  buyback_used: r.buyback_used,
+                  buyback_used_as: r.buyback_used_as,
+                  rebuys_used: r.rebuys_used,
+                  addons_used: r.addons_used,
+                  players: r.player
+                    ? { id: r.player.id, name: r.player.name }
+                    : null,
+                })),
+                tablesConfig: tablesCfg,
+                chipsCfg: {
+                  startingStack: tournament.starting_stack_snapshot ?? 0,
+                  rebuyChips:
+                    buyback.rebuyChips ?? tournament.rebuy_chips_snapshot ?? 0,
+                  addOnChips: buyback.addOnChips ?? 0,
+                },
+              });
+              const counts = stats.map((s) => s.activePlayers);
+              const spread =
+                counts.length > 0
+                  ? Math.max(...counts) - Math.min(...counts)
+                  : 0;
+              const totalActive = counts.reduce((s, n) => s + n, 0);
+              return (
+                <TableActions
+                  tournamentId={tournament.id}
+                  spread={spread}
+                  mergeFeasible={canMerge(stats)}
+                  activeCount={totalActive}
+                />
+              );
+            })()
+          : null}
 
         {tournament.status === "scheduled" && tournament.num_tables ? (
           <section className="rounded-lg border border-gold/30 bg-gold/5 p-4">
