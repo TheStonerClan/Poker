@@ -1,4 +1,9 @@
 import TvAutoRefresh from "@/components/tv/TvAutoRefresh";
+import {
+  biggestChipSwings,
+  type BiggestSwing,
+  type ChipSnapshotEvent,
+} from "@/lib/admin/chip-snapshots";
 import { formatChips, formatMoney } from "@/lib/tv/format";
 import type {
   TournamentPlayerWithName,
@@ -16,6 +21,12 @@ type Props = {
   tournament: TournamentRow;
   players: TournamentPlayerWithName[];
   payouts: PayoutRow[];
+  /**
+   * All chip_snapshot events for the recap tournament, ascending by
+   * created_at. Used to compute biggest single-break gain / loss for
+   * the "Swings" section. Empty array is fine; the section just hides.
+   */
+  chipSnapshots?: ChipSnapshotEvent[];
 };
 
 /**
@@ -25,7 +36,12 @@ type Props = {
  * until the next one starts. Survives for `RECAP_WINDOW_MS` (set in
  * app/tv/page.tsx) before the screen falls back to the waiting state.
  */
-export default function TvRecap({ tournament, players, payouts }: Props) {
+export default function TvRecap({
+  tournament,
+  players,
+  payouts,
+  chipSnapshots = [],
+}: Props) {
   const playerName = (id: string | null): string => {
     if (!id) return "—";
     return (
@@ -172,6 +188,14 @@ export default function TvRecap({ tournament, players, payouts }: Props) {
         </section>
       </main>
 
+      {/* SWINGS: biggest break-over-break gain and loss, derived from
+          chip_snapshot events (player self-reports). Hidden when no
+          snapshots were submitted. */}
+      <Swings
+        snapshots={chipSnapshots}
+        playerName={playerName}
+      />
+
       <hr className="mt-[clamp(0.75rem,2vh,2rem)] border-t border-gold/40" />
 
       {/* FOOTER: headline analytics */}
@@ -204,4 +228,92 @@ function ordinal(n: number): string {
       ? "th"
       : (["th", "st", "nd", "rd", "th"][Math.min(n % 10, 4)] ?? "th");
   return `${n}${suffix}`;
+}
+
+function Swings({
+  snapshots,
+  playerName,
+}: {
+  snapshots: ChipSnapshotEvent[];
+  playerName: (id: string | null) => string;
+}) {
+  const { biggestGain, biggestLoss } = biggestChipSwings(snapshots);
+  if (!biggestGain && !biggestLoss) return null;
+
+  return (
+    <section className="mt-[clamp(0.75rem,2vh,2rem)] border-t border-gold/40 pt-[clamp(0.75rem,1.5vh,1.5rem)]">
+      <h2 className="text-label uppercase tracking-[0.3em] text-[clamp(0.65rem,1vw,0.85rem)] font-semibold mb-[clamp(0.5rem,1vh,1rem)]">
+        Biggest swings
+      </h2>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-[clamp(0.75rem,2vw,2rem)]">
+        <SwingCard
+          tone="gain"
+          label="Biggest gain"
+          swing={biggestGain}
+          playerName={playerName}
+        />
+        <SwingCard
+          tone="loss"
+          label="Biggest loss"
+          swing={biggestLoss}
+          playerName={playerName}
+        />
+      </div>
+    </section>
+  );
+}
+
+function SwingCard({
+  tone,
+  label,
+  swing,
+  playerName,
+}: {
+  tone: "gain" | "loss";
+  label: string;
+  swing: BiggestSwing | null;
+  playerName: (id: string | null) => string;
+}) {
+  if (!swing) {
+    return (
+      <div className="rounded-md border border-fg/10 px-4 py-3 text-fg/40">
+        <span className="text-label uppercase tracking-[0.25em] text-[clamp(0.6rem,0.9vw,0.85rem)]">
+          {label}
+        </span>
+        <p className="mt-1 text-[clamp(0.85rem,1.1vw,1rem)]">No reports.</p>
+      </div>
+    );
+  }
+
+  const sign = swing.delta > 0 ? "+" : "";
+  const tint =
+    tone === "gain"
+      ? "border-success/40 bg-success/5"
+      : "border-danger/40 bg-danger/5";
+  const text = tone === "gain" ? "text-success" : "text-danger";
+
+  return (
+    <div className={`rounded-md border px-4 py-3 ${tint}`}>
+      <span className="text-label uppercase tracking-[0.25em] text-[clamp(0.6rem,0.9vw,0.85rem)]">
+        {label}
+      </span>
+      <div className="mt-1 flex items-baseline justify-between gap-3">
+        <span className="font-mono text-fg text-[clamp(1rem,1.6vw,1.5rem)]">
+          {playerName(swing.playerId)}
+        </span>
+        <span
+          className={`font-mono tabular-nums text-[clamp(1.1rem,1.8vw,1.75rem)] ${text}`}
+        >
+          {sign}
+          {swing.delta.toLocaleString()}
+        </span>
+      </div>
+      <p className="mt-1 text-[clamp(0.7rem,0.95vw,0.9rem)] text-fg/55">
+        At L{swing.levelNum} · new total{" "}
+        <span className="font-mono tabular-nums">
+          {swing.newChips.toLocaleString()}
+        </span>
+      </p>
+    </div>
+  );
 }
