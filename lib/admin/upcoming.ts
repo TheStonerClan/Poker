@@ -201,7 +201,16 @@ export async function fetchUpcomingTournaments(
       iso,
       dateOnly,
       timezone,
-      href: adminLinks ? `/admin/templates/${t.id}?tab=schedule` : null,
+      // Projected rows haven't been materialized into a `tournaments`
+      // row yet, so there's no /admin/tournaments/[id] page for the
+      // admin to land on. Route them to the wizard with the template
+      // pre-selected — the wizard will pick players, randomize seats,
+      // INSERT the tournament with status='scheduled', and redirect to
+      // the detail page where they can review + start. Materialized
+      // rows continue to deep-link straight to the detail page above.
+      href: adminLinks
+        ? `/admin/tournaments/new?templateId=${t.id}`
+        : null,
       kind: "projected",
     });
   }
