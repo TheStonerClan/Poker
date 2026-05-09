@@ -6,21 +6,36 @@ import { toIsoDate } from "@/lib/schedule/next-night";
 import { resolveNextNight } from "@/lib/schedule/server";
 import { createClient } from "@/lib/supabase/server";
 
-import { NextNightCard } from "./NextNightCard";
-import { RecurrenceEditor } from "./RecurrenceEditor";
 import { SignalCard } from "./SignalCard";
 
 export const dynamic = "force-dynamic";
 
 export default async function SettingsPage() {
   const templates = await getTemplates();
-  const primary = templates[0] ?? null;
   const signalConfigured = !!process.env.SIGNAL_BRIDGE_URL;
   const signalGroupId = process.env.SIGNAL_GROUP_ID ?? null;
 
-  const nextNight = primary
-    ? await resolveNextNight(await createClient(), primary)
-    : null;
+  // Resolve the upcoming-night summary for every template. Each one's
+  // recurrence + override controls live on its own Schedule tab now;
+  // here we just surface the next-night line as a quick at-a-glance.
+  const supabase = await createClient();
+  const summaries = await Promise.all(
+    templates.map(async (t) => {
+      const next = await resolveNextNight(supabase, t);
+      let line: string;
+      if (next.kind === "ok") {
+        const day = toIsoDate(next.next.effectiveDate);
+        line = next.next.isMoved
+          ? `${day} (moved from ${toIsoDate(next.next.originalDate)})`
+          : day;
+      } else if (next.kind === "no-rule") {
+        line = "No recurring schedule set";
+      } else {
+        line = `Next ${next.lookedAhead} occurrences cancelled`;
+      }
+      return { id: t.id, name: t.name, line, hasRule: next.kind === "ok" };
+    }),
+  );
 
   return (
     <>
@@ -35,60 +50,51 @@ export default async function SettingsPage() {
               Templates
             </p>
             <p className="mt-1 text-sm text-fg/80">
-              Edit blind structure, prizes, buyback rules
+              {templates.length} configured · clone, edit blinds / prizes /
+              buyback / schedule
             </p>
           </div>
           <span className="text-fg/40">›</span>
         </Link>
 
-        <SignalCard
-          configured={signalConfigured}
-          groupId={signalGroupId}
-        />
+        <SignalCard configured={signalConfigured} groupId={signalGroupId} />
 
         <section className="rounded-lg border border-fg/10 p-4">
           <h2 className="text-label text-[11px] font-semibold uppercase tracking-[0.25em]">
-            Recurring tournament
+            Upcoming poker nights
           </h2>
-          {primary ? (
-            <RecurrenceEditor
-              templateId={primary.id}
-              templateName={primary.name}
-              ruleString={primary.recurrence_rule}
-            />
-          ) : (
+          {summaries.length === 0 ? (
             <p className="mt-2 text-sm text-fg/70">
-              Create a tournament template first to set its schedule.
+              Create a template to set up a recurring schedule.
             </p>
+          ) : (
+            <ul className="mt-3 flex flex-col gap-2">
+              {summaries.map((s) => (
+                <li key={s.id}>
+                  <Link
+                    href={`/admin/templates/${s.id}?tab=schedule`}
+                    className="flex items-baseline justify-between rounded-md border border-fg/10 px-3 py-2.5 hover:border-gold/40"
+                  >
+                    <span className="text-sm font-semibold text-fg">
+                      {s.name}
+                    </span>
+                    <span
+                      className={`text-xs ${
+                        s.hasRule ? "text-fg/70" : "text-fg/40"
+                      }`}
+                    >
+                      {s.line}
+                    </span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
           )}
+          <p className="mt-3 text-xs text-fg/50">
+            Edit each template&rsquo;s recurring rule and one-off date overrides
+            from its Schedule tab.
+          </p>
         </section>
-
-        {primary && nextNight ? (
-          <section className="rounded-lg border border-fg/10 p-4">
-            {nextNight.kind === "ok" ? (
-              <NextNightCard
-                templateId={primary.id}
-                originalDate={toIsoDate(nextNight.next.originalDate)}
-                overriddenDate={
-                  nextNight.next.isMoved
-                    ? toIsoDate(nextNight.next.effectiveDate)
-                    : null
-                }
-                hasOverride={nextNight.next.overrideId !== null}
-                note={nextNight.next.note}
-              />
-            ) : nextNight.kind === "no-rule" ? (
-              <p className="text-sm text-fg/60">
-                Enable a recurring schedule above to manage one-off date changes.
-              </p>
-            ) : (
-              <p className="text-sm text-fg/60">
-                The next {nextNight.lookedAhead} occurrences are all cancelled.
-                Restore one above to schedule a poker night.
-              </p>
-            )}
-          </section>
-        ) : null}
 
         <section className="rounded-lg border border-fg/10 p-4">
           <h2 className="text-label text-[11px] font-semibold uppercase tracking-[0.25em]">

@@ -1,10 +1,116 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { z } from "zod";
 
 import { requireAdmin } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
+
+const CreateTemplateSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  sourceTemplateId: z.uuid(),
+});
+
+/**
+ * Clone an existing template to a new one with a fresh name. Cloning is
+ * the simplest UX for "make another template" — the admin starts from a
+ * known-good config and edits via the existing tabs (basics, buyback,
+ * blinds, prizes, schedule). A blank template would force the admin to
+ * fill out 11 levels of blinds and a prize structure from scratch.
+ *
+ * The clone deep-copies the blind_structures row too — the source and
+ * the clone get independent structures so editing one doesn't affect
+ * the other.
+ */
+export async function createTournamentTemplate(
+  _prev: { status: "idle" | "ok" | "error"; message?: string },
+  formData: FormData,
+): Promise<{ status: "idle" | "ok" | "error"; message?: string }> {
+  await requireAdmin();
+  const parsed = CreateTemplateSchema.safeParse({
+    name: formData.get("name") ?? "",
+    sourceTemplateId: formData.get("sourceTemplateId"),
+  });
+  if (!parsed.success) {
+    return { status: "error", message: parsed.error.issues[0]?.message };
+  }
+  const { name, sourceTemplateId } = parsed.data;
+  const supabase = await createClient();
+
+  // Pull the source template + blind structure.
+  const { data: source, error: srcErr } = await supabase
+    .from("tournament_templates")
+    .select("*")
+    .eq("id", sourceTemplateId)
+    .maybeSingle();
+  if (srcErr || !source) {
+    return { status: "error", message: srcErr?.message ?? "Source not found" };
+  }
+
+  const { data: srcStruct } = await supabase
+    .from("blind_structures")
+    .select("*")
+    .eq("id", source.blind_structure_id)
+    .maybeSingle();
+  if (!srcStruct) {
+    return { status: "error", message: "Source blind structure not found" };
+  }
+
+  // Insert a copy of the blind structure.
+  const { data: newStruct, error: structErr } = await supabase
+    .from("blind_structures")
+    .insert({
+      name: `${name} — blinds`,
+      levels: srcStruct.levels,
+      notes: `Cloned from "${srcStruct.name}".`,
+    })
+    .select("id")
+    .single();
+  if (structErr || !newStruct) {
+    return {
+      status: "error",
+      message: structErr?.message ?? "Could not clone blind structure",
+    };
+  }
+
+  // Insert the new template referencing the cloned blind structure.
+  const { data: newTemplate, error: tmplErr } = await supabase
+    .from("tournament_templates")
+    .insert({
+      name,
+      location: source.location,
+      currency: source.currency,
+      // Don't carry recurrence_rule across — each template owns its own
+      // schedule, and copying the source's rule would silently double-
+      // book the same poker night across two templates.
+      recurrence_rule: null,
+      buy_in: source.buy_in,
+      starting_stack: source.starting_stack,
+      max_rebuys: source.max_rebuys,
+      rebuy_price: source.rebuy_price,
+      rebuy_chips: source.rebuy_chips,
+      ante_mode: source.ante_mode,
+      buyback_config: source.buyback_config,
+      side_pots: source.side_pots,
+      rounding_mode: source.rounding_mode,
+      prize_rules: source.prize_rules,
+      chip_denominations: source.chip_denominations,
+      starting_stack_composition: source.starting_stack_composition,
+      blind_structure_id: newStruct.id,
+    })
+    .select("id")
+    .single();
+  if (tmplErr || !newTemplate) {
+    return {
+      status: "error",
+      message: tmplErr?.message ?? "Could not create template",
+    };
+  }
+
+  revalidatePath("/admin/templates");
+  redirect(`/admin/templates/${newTemplate.id}`);
+}
 
 const BasicsSchema = z.object({
   templateId: z.uuid(),
