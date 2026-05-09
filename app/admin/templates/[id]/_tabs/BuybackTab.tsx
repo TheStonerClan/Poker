@@ -15,6 +15,7 @@ export function BuybackTab({ template }: { template: TournamentTemplate }) {
     INITIAL,
   );
   const cfg = template.buyback_config as {
+    tokensPerPlayer?: number;
     price?: number;
     rebuyChips?: number;
     rebuyAllowedThroughLevel?: number;
@@ -26,10 +27,22 @@ export function BuybackTab({ template }: { template: TournamentTemplate }) {
     <form action={action} className="flex flex-col gap-4">
       <input type="hidden" name="templateId" value={template.id} />
       <p className="text-xs text-fg/60">
-        Each player gets one buyback token. They can spend it as a rebuy
-        (within the rebuy window) or as an add-on (at the break level).
+        Each player gets a budget of buyback tokens. A token is spent on
+        either a rebuy (within the rebuy window) or an add-on (at the
+        break level). Default 1 keeps the &ldquo;one or the other&rdquo;
+        house rule; raise to 2+ to allow e.g. rebuy AND add-on.
       </p>
       <div className="grid grid-cols-2 gap-3">
+        <Field
+          label="Tokens per player"
+          name="tokens_per_player"
+          type="number"
+          inputMode="numeric"
+          min="1"
+          max="5"
+          defaultValue={String(cfg.tokensPerPlayer ?? 1)}
+          required
+        />
         <Field
           label="Buyback price"
           name="rebuy_price"

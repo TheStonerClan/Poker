@@ -2,7 +2,10 @@
 
 import { useMemo, useState } from "react";
 
-import { submitColorUpRequest } from "@/app/play/[sessionId]/actions";
+import {
+  submitChipSnapshot,
+  submitColorUpRequest,
+} from "@/app/play/[sessionId]/actions";
 import {
   computeExchange,
   type ComputeExchangeResult,
@@ -14,6 +17,20 @@ type Props = {
   playerId: string;
   chipDenominations: Array<{ color: string; value: number }>;
   currentColorUp: number[];
+  /**
+   * True when the tournament is paused at a break level. The chip-count
+   * submission form only renders during breaks; the exchange form
+   * additionally requires currentColorUp.length > 0.
+   */
+  isBreak: boolean;
+  /** Current level number — included in the chip-snapshot event payload. */
+  currentLevelNum: number;
+  /**
+   * Player's most recent server-side chip count. Pre-fills the
+   * "post-color-up total" input with the previous value as a starting
+   * point so they don't have to retype the whole number.
+   */
+  currentChips: number;
 };
 
 type Submission = "idle" | "submitting" | "submitted" | "error";
@@ -23,7 +40,67 @@ export function ColorUpTab({
   playerId,
   chipDenominations,
   currentColorUp,
+  isBreak,
+  currentLevelNum,
+  currentChips,
 }: Props) {
+  const colorUpActive = currentColorUp.length > 0;
+
+  if (!isBreak) {
+    return (
+      <div className="rounded-2xl border border-gold/30 bg-bg/40 p-5">
+        <p className="text-label text-xs uppercase tracking-widest">
+          Wait for the next break
+        </p>
+        <p className="mt-2 text-sm text-fg/70">
+          Color-up exchanges and chip-count check-ins happen during breaks.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-6">
+      {colorUpActive ? (
+        <ExchangeForm
+          sessionId={sessionId}
+          playerId={playerId}
+          chipDenominations={chipDenominations}
+          currentColorUp={currentColorUp}
+        />
+      ) : (
+        <div className="rounded-2xl border border-gold/30 bg-bg/40 p-5">
+          <p className="text-label text-xs uppercase tracking-widest">
+            No color-up this break
+          </p>
+          <p className="mt-2 text-sm text-fg/70">
+            The admin didn&apos;t flag this level for a color-up exchange. You
+            can still log your stack below for analytics.
+          </p>
+        </div>
+      )}
+
+      <StackCountForm
+        tournamentId={sessionId}
+        playerId={playerId}
+        currentLevelNum={currentLevelNum}
+        currentChips={currentChips}
+      />
+    </div>
+  );
+}
+
+function ExchangeForm({
+  sessionId,
+  playerId,
+  chipDenominations,
+  currentColorUp,
+}: {
+  sessionId: string;
+  playerId: string;
+  chipDenominations: Array<{ color: string; value: number }>;
+  currentColorUp: number[];
+}) {
   const [chipTotal, setChipTotal] = useState("");
   const [submission, setSubmission] = useState<Submission>("idle");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -53,20 +130,6 @@ export function ColorUpTab({
     } catch (e) {
       previewError = e instanceof Error ? e.message : "Could not compute";
     }
-  }
-
-  if (removingDenominations.length === 0) {
-    return (
-      <div className="rounded-2xl border border-gold/30 bg-bg/40 p-5">
-        <p className="text-label text-xs uppercase tracking-widest">
-          No color-up active
-        </p>
-        <p className="mt-2 text-sm text-fg/70">
-          The current level isn&apos;t a color-up break. Wait for the admin to
-          announce one.
-        </p>
-      </div>
-    );
   }
 
   async function handleSubmit() {
@@ -176,6 +239,112 @@ export function ColorUpTab({
           className="rounded-2xl border border-gold-bright bg-gold/15 px-5 py-5 text-lg font-semibold uppercase tracking-widest text-gold-bright disabled:border-fg/10 disabled:bg-fg/5 disabled:text-fg/30"
         >
           {submission === "submitting" ? "Sending…" : "Send to admin"}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function StackCountForm({
+  tournamentId,
+  playerId,
+  currentLevelNum,
+  currentChips,
+}: {
+  tournamentId: string;
+  playerId: string;
+  currentLevelNum: number;
+  currentChips: number;
+}) {
+  const [stackInput, setStackInput] = useState(String(currentChips));
+  const [status, setStatus] = useState<Submission>("idle");
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const parsed = Number.parseInt(stackInput, 10);
+  const valid = Number.isFinite(parsed) && parsed >= 0;
+  const delta = valid ? parsed - currentChips : 0;
+
+  async function submit() {
+    if (!valid) return;
+    setStatus("submitting");
+    setErrorMsg(null);
+    const res = await submitChipSnapshot({
+      tournamentId,
+      playerId,
+      anonSession: getOrCreateAnonSession(),
+      chips: parsed,
+    });
+    if (res.ok) {
+      setStatus("submitted");
+    } else {
+      setStatus("error");
+      setErrorMsg(res.error);
+    }
+  }
+
+  return (
+    <div className="rounded-2xl border border-fg/15 bg-bg/40 p-5">
+      <p className="text-label text-xs uppercase tracking-widest">
+        Log your stack — Level {currentLevelNum}
+      </p>
+      <p className="mt-2 text-sm text-fg/60">
+        After you finish coloring up, count your chips and submit your total.
+        We use this for break-over-break analytics. Last logged total:{" "}
+        <span className="font-mono text-fg">
+          ${currentChips.toLocaleString()}
+        </span>
+        .
+      </p>
+
+      <label className="mt-4 block">
+        <span className="text-label text-xs uppercase tracking-widest">
+          Total chips
+        </span>
+        <input
+          type="number"
+          inputMode="numeric"
+          min={0}
+          step={1}
+          value={stackInput}
+          onChange={(e) => {
+            setStackInput(e.target.value);
+            if (status === "submitted") setStatus("idle");
+          }}
+          className="mt-2 w-full rounded-xl border border-fg/20 bg-bg px-4 py-4 text-3xl tabular-nums text-fg outline-none focus:border-gold-bright"
+          aria-invalid={!valid}
+        />
+      </label>
+
+      {valid && delta !== 0 ? (
+        <p className="mt-3 text-sm text-fg/70">
+          {delta > 0 ? "Up" : "Down"}{" "}
+          <span
+            className={`font-mono ${delta > 0 ? "text-success" : "text-danger"}`}
+          >
+            ${Math.abs(delta).toLocaleString()}
+          </span>{" "}
+          since the last update.
+        </p>
+      ) : null}
+
+      {errorMsg ? (
+        <p className="mt-3 rounded-2xl border border-danger/60 bg-danger/10 p-3 text-sm text-danger">
+          {errorMsg}
+        </p>
+      ) : null}
+
+      {status === "submitted" ? (
+        <p className="mt-3 rounded-2xl border border-success/60 bg-success/10 p-3 text-sm text-success">
+          Logged. Average stack on the TV will reflect your total.
+        </p>
+      ) : (
+        <button
+          type="button"
+          disabled={!valid || status === "submitting"}
+          onClick={submit}
+          className="mt-3 w-full rounded-2xl border border-gold-bright bg-gold/15 px-5 py-4 text-base font-semibold uppercase tracking-widest text-gold-bright disabled:border-fg/10 disabled:bg-fg/5 disabled:text-fg/30"
+        >
+          {status === "submitting" ? "Logging…" : "Log my stack"}
         </button>
       )}
     </div>

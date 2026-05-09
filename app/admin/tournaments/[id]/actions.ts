@@ -262,12 +262,11 @@ export async function rebuyPlayer(input: { tournamentPlayerId: string }) {
   const { data: tp } = await supabase
     .from("tournament_players")
     .select(
-      "tournament_id, player_id, buyback_used, busted_at_time, current_chips",
+      "tournament_id, player_id, busted_at_time, current_chips, rebuys_used, addons_used",
     )
     .eq("id", tournamentPlayerId)
     .maybeSingle();
   if (!tp) throw new Error("Player slot not found");
-  if (tp.buyback_used) throw new Error("Buyback token already spent");
 
   const { data: t } = await supabase
     .from("tournaments")
@@ -280,7 +279,19 @@ export async function rebuyPlayer(input: { tournamentPlayerId: string }) {
   const cfg = (t?.buyback_config_snapshot ?? {}) as {
     rebuyAllowedThroughLevel?: number;
     rebuyChips?: number;
+    tokensPerPlayer?: number;
   };
+
+  // Token limit: rebuys + addons combined cannot exceed tokensPerPlayer.
+  // Default 1 if unset; the admin can raise it on the template/tournament.
+  const tokensPerPlayer = Math.max(1, cfg.tokensPerPlayer ?? 1);
+  const tokensSpent = (tp.rebuys_used ?? 0) + (tp.addons_used ?? 0);
+  if (tokensSpent >= tokensPerPlayer) {
+    throw new Error(
+      `Buyback limit reached (${tokensSpent} of ${tokensPerPlayer} used).`,
+    );
+  }
+
   const cap = cfg.rebuyAllowedThroughLevel ?? Number.POSITIVE_INFINITY;
   if (t && t.current_level > cap) {
     throw new Error(`Rebuy window closed (allowed through level ${cap}).`);
@@ -296,6 +307,7 @@ export async function rebuyPlayer(input: { tournamentPlayerId: string }) {
       buyback_used_as: "rebuy",
       buyback_used_at_level: t?.current_level ?? null,
       buyback_used_at_time: now,
+      rebuys_used: (tp.rebuys_used ?? 0) + 1,
       busted_at_level: null,
       busted_at_time: null,
       // The player is back in play; their previous finishing_position
@@ -316,6 +328,8 @@ export async function rebuyPlayer(input: { tournamentPlayerId: string }) {
       player_id: tp.player_id,
       at_level: t?.current_level ?? null,
       chips,
+      tokens_spent_after: tokensSpent + 1,
+      tokens_per_player: tokensPerPlayer,
     },
   });
 
@@ -330,12 +344,11 @@ export async function applyAddOn(input: { tournamentPlayerId: string }) {
   const { data: tp } = await supabase
     .from("tournament_players")
     .select(
-      "tournament_id, player_id, buyback_used, current_chips",
+      "tournament_id, player_id, current_chips, rebuys_used, addons_used",
     )
     .eq("id", tournamentPlayerId)
     .maybeSingle();
   if (!tp) throw new Error("Player slot not found");
-  if (tp.buyback_used) throw new Error("Buyback token already spent");
 
   const { data: t } = await supabase
     .from("tournaments")
@@ -346,7 +359,17 @@ export async function applyAddOn(input: { tournamentPlayerId: string }) {
   const cfg = (t?.buyback_config_snapshot ?? {}) as {
     addOnAtBreakLevel?: number;
     addOnChips?: number;
+    tokensPerPlayer?: number;
   };
+
+  // Same token-limit check as rebuy: addons share the buyback budget.
+  const tokensPerPlayer = Math.max(1, cfg.tokensPerPlayer ?? 1);
+  const tokensSpent = (tp.rebuys_used ?? 0) + (tp.addons_used ?? 0);
+  if (tokensSpent >= tokensPerPlayer) {
+    throw new Error(
+      `Buyback limit reached (${tokensSpent} of ${tokensPerPlayer} used).`,
+    );
+  }
   if (t && cfg.addOnAtBreakLevel && t.current_level !== cfg.addOnAtBreakLevel) {
     throw new Error(
       `Add-on only available at break level ${cfg.addOnAtBreakLevel}.`,
@@ -363,6 +386,7 @@ export async function applyAddOn(input: { tournamentPlayerId: string }) {
       buyback_used_as: "addon",
       buyback_used_at_level: t?.current_level ?? null,
       buyback_used_at_time: now,
+      addons_used: (tp.addons_used ?? 0) + 1,
       current_chips: (tp.current_chips ?? 0) + addChips,
     })
     .eq("id", tournamentPlayerId);
@@ -376,6 +400,8 @@ export async function applyAddOn(input: { tournamentPlayerId: string }) {
       player_id: tp.player_id,
       at_level: t?.current_level ?? null,
       chips_added: addChips,
+      tokens_spent_after: tokensSpent + 1,
+      tokens_per_player: tokensPerPlayer,
     },
   });
 
@@ -452,11 +478,20 @@ async function performFinalize(
 
   const { data: roster } = await supabase
     .from("tournament_players")
-    .select("id, player_id, buyback_used, busted_at_time, finishing_position")
+    .select(
+      "id, player_id, buyback_used, rebuys_used, addons_used, busted_at_time, finishing_position",
+    )
     .eq("tournament_id", tournamentId);
 
   const players = roster ?? [];
-  const buybacks = players.filter((p) => p.buyback_used).length;
+  // Sum the per-player counters so buybacks reflects actual paid entries
+  // when tokensPerPlayer > 1. The counter columns default to 0 and the
+  // 0003 backfill set them to 1 for legacy rows that already had
+  // buyback_used=true, so this is correct for both old and new data.
+  const buybacks = players.reduce(
+    (s, p) => s + (p.rebuys_used ?? 0) + (p.addons_used ?? 0),
+    0,
+  );
 
   const payouts = computePayouts(
     t.prize_rules_snapshot as Parameters<typeof computePayouts>[0],
