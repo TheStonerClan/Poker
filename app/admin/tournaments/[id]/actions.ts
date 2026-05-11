@@ -1255,18 +1255,24 @@ export async function addPlayersToTournament(input: {
         continue;
       }
 
-      // Pick the table with the most remaining capacity. Ties break
-      // to the lowest-indexed table so the result is deterministic.
+      // Pick the table with the FEWEST occupants (skipping any at
+      // cap). Ties break to the lowest-indexed table for
+      // determinism. We deliberately go by fewest-filled rather than
+      // most-remaining-seats: with uneven max_seats those two pick
+      // different tables, and "balanced player count" is what the
+      // admin wants when staging a late RSVP. Bug reported by Travis
+      // — caps 10/9, current split 7/6, added player went to t1
+      // (more remaining) instead of t2 (fewer players).
       let bestIdx = -1;
-      let bestRemaining = -1;
+      let bestFilled = Infinity;
       for (let i = 0; i < tables.length; i++) {
-        const remaining = tables[i].max_seats - filled[i];
-        if (remaining > bestRemaining) {
+        if (filled[i] >= tables[i].max_seats) continue;
+        if (filled[i] < bestFilled) {
           bestIdx = i;
-          bestRemaining = remaining;
+          bestFilled = filled[i];
         }
       }
-      if (bestIdx < 0 || bestRemaining <= 0) {
+      if (bestIdx < 0) {
         throw new Error(
           "All tables are full. Add a table or raise a seat cap before adding more players.",
         );
