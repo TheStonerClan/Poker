@@ -171,12 +171,28 @@ export type RandomizeArgs = {
 };
 
 /**
- * Greedy "assign to most-remaining-seats" randomization. With equal-
- * capacity tables this round-robins (any table tied for most-remaining
- * is fine; first-found wins on ties). With mixed capacities, smaller
- * tables fill at the same rate as larger ones BUT they hit their cap
- * sooner — so the leftover stragglers naturally land at the larger
- * tables. Example (caps 9/9/7, 18 players → 6/6/6; 24 players → 9/8/7).
+ * Greedy "assign to least-filled table" randomization. Balances
+ * player counts across tables: with N players and T equal-cap
+ * tables we get either floor(N/T) or ceil(N/T) per table, with the
+ * "extras" landing at the lowest-indexed tables.
+ *
+ * Tables at their max_seats cap are skipped, so a smaller table
+ * naturally stops receiving players once full and the remainder
+ * lands on the larger tables (preserves the original "stragglers
+ * go to larger tables" behavior for mixed-capacity setups).
+ *
+ * Picking by FEWEST-FILLED rather than MOST-REMAINING matters when
+ * caps are uneven. Example: caps 10/9, 14 players —
+ *   - fewest-filled: 7/7 (balanced)
+ *   - most-remaining: 8/6 (because t1 always has more remaining)
+ * Travis hit the second behavior when adding a late RSVP and that's
+ * what this rewrite fixes.
+ *
+ * More examples (caps 9/9/7):
+ *   - 18 players → 6/6/6 (alternating)
+ *   - 21 players → 7/7/7 (alternating, t3 hits cap)
+ *   - 24 players → 9/8/7 (t3 full, t1 and t2 share the rest with
+ *     t1 winning ties on lowest-index)
  */
 export function randomizeAssignments(args: RandomizeArgs): Assignment[] {
   const { playerIds, tables, random = Math.random } = args;
@@ -202,21 +218,19 @@ export function randomizeAssignments(args: RandomizeArgs): Assignment[] {
   const seatsAtTable: string[][] = Array.from({ length: T }, () => []);
 
   for (const id of shuffled) {
-    // Find the table with the most remaining capacity. Ties break to the
-    // lowest-indexed table so the result is deterministic given the
-    // shuffle order — useful for the "stragglers go to larger tables"
-    // contract: when caps are 9/9/7 and we're past the 7-mark, table 2
-    // (cap 7) is full, so the remaining capacity is in tables 0/1.
+    // Pick the table with the FEWEST occupants (not the most
+    // remaining capacity). Skip tables at cap. Ties break to lowest
+    // index. This is what makes uneven-cap setups balance correctly.
     let bestIdx = -1;
-    let bestRemaining = -1;
+    let bestFilled = Infinity;
     for (let i = 0; i < T; i++) {
-      const remaining = tables[i].max_seats - filled[i];
-      if (remaining > bestRemaining) {
+      if (filled[i] >= tables[i].max_seats) continue;
+      if (filled[i] < bestFilled) {
         bestIdx = i;
-        bestRemaining = remaining;
+        bestFilled = filled[i];
       }
     }
-    if (bestIdx < 0 || bestRemaining <= 0) {
+    if (bestIdx < 0) {
       // Should not happen given the cap check above.
       throw new Error("ran out of seats during assignment");
     }
