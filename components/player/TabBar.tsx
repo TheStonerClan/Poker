@@ -1,9 +1,10 @@
 "use client";
 
-export type TabKey = "stats" | "color-up" | "bust";
+export type TabKey = "stats" | "history" | "color-up" | "bust";
 
 const TABS: Array<{ key: TabKey; label: string }> = [
   { key: "stats", label: "Stats" },
+  { key: "history", label: "History" },
   { key: "color-up", label: "Color up" },
   { key: "bust", label: "Bust" },
 ];
@@ -20,10 +21,13 @@ export function TabBar({ active, onChange, disableActions = false }: Props) {
       className="fixed inset-x-0 bottom-0 z-10 border-t border-gold/30 bg-bg/95 px-2 pb-[max(env(safe-area-inset-bottom),0.5rem)] pt-2 backdrop-blur"
       aria-label="Player view tabs"
     >
-      <ul className="grid grid-cols-3 gap-1">
+      <ul className="grid grid-cols-4 gap-1">
         {TABS.map(({ key, label }) => {
           const isActive = key === active;
-          const isDisabled = disableActions && key !== "stats";
+          // Stats + History are always readable; color-up + bust are
+          // admin-locked (busted or finished tournaments disable them).
+          const isDisabled =
+            disableActions && key !== "stats" && key !== "history";
           return (
             <li key={key}>
               <button

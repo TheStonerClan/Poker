@@ -7,6 +7,7 @@ import { usePlayerClaim } from "@/lib/presence";
 
 import { BustTab } from "./BustTab";
 import { ColorUpTab } from "./ColorUpTab";
+import { HistoryTab, type PlayerHistoryProps } from "./HistoryTab";
 import { StatsTab } from "./StatsTab";
 import { TabBar, type TabKey } from "./TabBar";
 
@@ -42,6 +43,13 @@ export type PlayerHomeProps = {
     chipDenominations: Array<{ color: string; value: number }>;
     currentColorUp: number[];
   };
+  /**
+   * Per-player all-time aggregate across every finished tournament,
+   * computed server-side. Null when the player has never finished a
+   * tournament — the History tab renders an empty-state instead of
+   * a wall of zeroes.
+   */
+  history: PlayerHistoryProps | null;
 };
 
 export function PlayerHome(props: PlayerHomeProps) {
@@ -83,6 +91,7 @@ export function PlayerHome(props: PlayerHomeProps) {
             optimisticBusted={optimisticBusted}
           />
         )}
+        {tab === "history" && <HistoryTab history={props.history} />}
         {tab === "color-up" && showAdminLockedTabs && (
           <ColorUpTab
             sessionId={sessionId}
