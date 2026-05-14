@@ -1,18 +1,18 @@
 import type { Metadata } from "next";
 
-import { LoginForm } from "./LoginForm";
+import { ResetRequestForm } from "./ResetRequestForm";
 
 export const metadata: Metadata = {
-  title: "Admin sign in — Holdem Clock",
+  title: "Reset password — Holdem Clock",
   robots: { index: false, follow: false },
 };
 
-export default async function LoginPage({
+export default async function ResetPage({
   searchParams,
 }: {
-  searchParams: Promise<{ next?: string; error?: string }>;
+  searchParams: Promise<{ error?: string }>;
 }) {
-  const { next, error } = await searchParams;
+  const { error } = await searchParams;
 
   return (
     <main className="mx-auto flex w-full max-w-sm flex-1 flex-col justify-center px-6 py-10">
@@ -20,7 +20,10 @@ export default async function LoginPage({
         <p className="text-label text-xs font-semibold uppercase tracking-[0.3em]">
           Holdem Clock
         </p>
-        <h1 className="mt-2 text-2xl font-semibold text-fg">Admin sign in</h1>
+        <h1 className="mt-2 text-2xl font-semibold text-fg">Reset password</h1>
+        <p className="mt-2 text-sm text-fg/60">
+          Enter your email and we&apos;ll send a reset link.
+        </p>
       </header>
 
       {error ? (
@@ -32,7 +35,7 @@ export default async function LoginPage({
         </div>
       ) : null}
 
-      <LoginForm next={next ?? "/admin"} />
+      <ResetRequestForm />
     </main>
   );
 }
