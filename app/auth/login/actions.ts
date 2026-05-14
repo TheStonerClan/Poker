@@ -175,10 +175,10 @@ export async function requestPasswordReset(
     };
   }
 
-  // Route through the existing callback so the recovery code is exchanged
-  // for a session before the user lands on the new-password form.
-  const redirectTo = new URL("/auth/callback", origin);
-  redirectTo.searchParams.set("next", "/auth/reset/confirm");
+  // Point straight at the confirm page; it does its own code exchange.
+  // Avoids forwarding `?next=` through the callback, which makes the
+  // Supabase Redirect URL allowlist easier to match (one path, no query).
+  const redirectTo = new URL("/auth/reset/confirm", origin);
 
   // Always report success, even if the email doesn't exist, to avoid
   // leaking which addresses have admin accounts.
