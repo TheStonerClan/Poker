@@ -535,6 +535,7 @@ export type Database = {
     }
     Functions: {
       is_admin: { Args: never; Returns: boolean }
+      delete_tournament: { Args: { p_tournament_id: string }; Returns: void }
     }
     Enums: {
       [_ in never]: never

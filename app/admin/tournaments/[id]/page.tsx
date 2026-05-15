@@ -31,6 +31,7 @@ import {
 import { LevelControls } from "../../_components/LevelControls";
 import { PlayerGrid } from "./_components/PlayerGrid";
 import { ColorUpInbox } from "./_components/ColorUpInbox";
+import { DeleteTournamentButton } from "./_components/DeleteTournamentButton";
 import { FinalizeButton } from "./_components/FinalizeButton";
 import { RerandomizeButton } from "./_components/RerandomizeButton";
 import {
@@ -445,6 +446,27 @@ export default async function LiveTournamentPage({
             inPlayCount={inPlay.length}
           />
         </section>
+
+        {tournament.status === "scheduled" ||
+        tournament.status === "finished" ||
+        tournament.status === "cancelled" ? (
+          <section className="rounded-lg border border-danger/30 bg-danger/5 p-4">
+            <h2 className="text-label text-[11px] font-semibold uppercase tracking-[0.25em] text-danger">
+              Danger zone
+            </h2>
+            <p className="mt-1 text-xs text-fg/60">
+              {tournament.status === "scheduled"
+                ? "Cancel this tournament before it starts. Removes the staged roster and table assignments. Use if you set one up by mistake or it's a dummy run."
+                : "Permanently delete this finalized tournament. Wipes the results, payouts, and event history. Use only for test/dummy tournaments — there is no undo."}
+            </p>
+            <div className="mt-3">
+              <DeleteTournamentButton
+                tournamentId={tournament.id}
+                mode={tournament.status === "scheduled" ? "cancel" : "delete"}
+              />
+            </div>
+          </section>
+        ) : null}
       </main>
     </>
   );
