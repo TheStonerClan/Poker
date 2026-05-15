@@ -886,6 +886,94 @@ export async function finalizeTournament(
 }
 
 /**
+ * Hard-delete a tournament that hasn't started yet. The admin set one up
+ * by mistake (wrong template, dummy/test run) and wants it gone — there
+ * are no events worth preserving, so the row and its empty roster get
+ * dropped entirely instead of being soft-cancelled.
+ *
+ * Wraps the `delete_tournament` RPC, which handles the
+ * tournament_events append-only trigger that would otherwise block the
+ * cascading delete. Gated to status='scheduled' so a live or finished
+ * tournament can't be wiped by accident.
+ */
+export async function cancelScheduledTournament(
+  tournamentId: string,
+): Promise<AdminActionResult> {
+  return runAdminAction(async () => {
+    await requireAdmin();
+    const id = IdSchema.parse(tournamentId);
+    const supabase = await createClient();
+
+    const { data: t, error: fetchErr } = await supabase
+      .from("tournaments")
+      .select("status")
+      .eq("id", id)
+      .maybeSingle();
+    if (fetchErr || !t) {
+      throw new Error(fetchErr?.message ?? "Tournament not found");
+    }
+    if (t.status !== "scheduled") {
+      throw new Error(
+        `Cancel is only available before a tournament starts (currently ${t.status}). Finish it first, then delete from the detail page.`,
+      );
+    }
+
+    const { error } = await supabase.rpc("delete_tournament", {
+      p_tournament_id: id,
+    });
+    if (error) throw new Error(error.message);
+
+    revalidatePath("/admin");
+    revalidatePath("/admin/tournaments");
+    revalidatePath("/tv");
+  });
+}
+
+/**
+ * Hard-delete a finalized tournament. Use case: the admin ran a
+ * test/dummy tournament end-to-end and now wants it gone from
+ * /history. Wipes the tournament plus its roster, events, color-up
+ * requests, and prize distributions via the cascading delete RPC.
+ *
+ * Gated to status='finished' (and 'cancelled' for legacy soft-cancelled
+ * rows, if any exist) so a live tournament can't be deleted out from
+ * under the admin mid-game. Destructive — UI surfaces a confirm.
+ */
+export async function deleteFinalizedTournament(
+  tournamentId: string,
+): Promise<AdminActionResult> {
+  return runAdminAction(async () => {
+    await requireAdmin();
+    const id = IdSchema.parse(tournamentId);
+    const supabase = await createClient();
+
+    const { data: t, error: fetchErr } = await supabase
+      .from("tournaments")
+      .select("status")
+      .eq("id", id)
+      .maybeSingle();
+    if (fetchErr || !t) {
+      throw new Error(fetchErr?.message ?? "Tournament not found");
+    }
+    if (t.status !== "finished" && t.status !== "cancelled") {
+      throw new Error(
+        `Delete is only available after a tournament finishes (currently ${t.status}). Finalize it first.`,
+      );
+    }
+
+    const { error } = await supabase.rpc("delete_tournament", {
+      p_tournament_id: id,
+    });
+    if (error) throw new Error(error.message);
+
+    revalidatePath("/admin");
+    revalidatePath("/admin/tournaments");
+    revalidatePath("/history");
+    revalidatePath("/tv");
+  });
+}
+
+/**
  * Re-shuffle the roster across the tournament's tables. Only valid while
  * the tournament is in `scheduled` state (before the timer starts) — once
  * the cards are dealt, players are committed to their seats.
