@@ -8,6 +8,7 @@ import { resolveNextNight } from "@/lib/schedule/server";
 import {
   isValidHhMm,
   isValidTimezone,
+  localDateInTz,
   splitHhMm,
   zonedWallClockToUtc,
 } from "@/lib/schedule/zoned-time";
@@ -135,12 +136,24 @@ export async function fetchUpcomingTournaments(
   // "This template already has a materialized scheduled tournament
   // on this calendar date" set so a projection doesn't double-up the
   // same event.
+  //
+  // The date key is the LOCAL date in the template's venue zone, not
+  // UTC. An evening tournament stored as a UTC timestamp rolls over
+  // to the next UTC calendar day in any west-of-UTC zone — comparing
+  // `.slice(0, 10)` against the projected `isoDate` (which is the
+  // local calendar date from the recurrence resolver) would miss the
+  // match for any 6 PM+ event in CST/PST/etc. Format in the template's
+  // zone instead so the keys line up.
   const materializedByTemplateDate = new Set<string>();
   for (const row of scheduledData ?? []) {
     if (!row.template_id || !row.scheduled_at) continue;
-    materializedByTemplateDate.add(
-      `${row.template_id}:${row.scheduled_at.slice(0, 10)}`,
-    );
+    const tz = (row.template as { start_timezone?: string | null } | null)
+      ?.start_timezone;
+    const dateKey =
+      tz && isValidTimezone(tz)
+        ? localDateInTz(new Date(row.scheduled_at), tz)
+        : row.scheduled_at.slice(0, 10);
+    materializedByTemplateDate.add(`${row.template_id}:${dateKey}`);
   }
 
   const projected: UpcomingTournament[] = [];

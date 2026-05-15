@@ -1,7 +1,15 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 
 import { TopBar } from "@/components/admin/TopBar";
 import { getPlayers, getTemplates } from "@/lib/admin/queries";
+import { toIsoDate } from "@/lib/schedule/next-night";
+import { resolveNextNight } from "@/lib/schedule/server";
+import {
+  isValidTimezone,
+  localDateInTz,
+} from "@/lib/schedule/zoned-time";
+import { createClient } from "@/lib/supabase/server";
 
 import { NewTournamentWizard } from "./Wizard";
 
@@ -17,6 +25,12 @@ type SearchParams = { templateId?: string };
  * recurrence-projected occurrence straight here with the right
  * template pre-selected — the admin lands on the Settings step (one
  * past the template picker) and walks through Players → Tables → Start.
+ *
+ * If the admin has already saved a scheduled tournament for this
+ * template's next occurrence, we redirect to its detail page instead
+ * of re-rendering the wizard — clicking the "Recurring" projection
+ * twice would otherwise look like it's trying to create a new
+ * tournament when the admin just wanted to edit the existing roster.
  */
 export default async function NewTournamentPage({
   searchParams,
@@ -28,6 +42,34 @@ export default async function NewTournamentPage({
     getPlayers(),
     searchParams,
   ]);
+
+  if (sp.templateId && templates.some((t) => t.id === sp.templateId)) {
+    const supabase = await createClient();
+    const template = templates.find((t) => t.id === sp.templateId);
+    if (template?.recurrence_rule) {
+      const next = await resolveNextNight(supabase, template);
+      if (next.kind === "ok") {
+        const targetDate = toIsoDate(next.next.effectiveDate);
+        const { data: existing } = await supabase
+          .from("tournaments")
+          .select("id, scheduled_at")
+          .eq("template_id", template.id)
+          .eq("status", "scheduled");
+        const match = (existing ?? []).find((row) => {
+          if (!row.scheduled_at) return false;
+          const tz = template.start_timezone;
+          const rowDate =
+            tz && isValidTimezone(tz)
+              ? localDateInTz(new Date(row.scheduled_at), tz)
+              : row.scheduled_at.slice(0, 10);
+          return rowDate === targetDate;
+        });
+        if (match) {
+          redirect(`/admin/tournaments/${match.id}`);
+        }
+      }
+    }
+  }
 
   if (templates.length === 0) {
     return (

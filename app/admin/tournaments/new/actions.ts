@@ -12,6 +12,15 @@ import {
   type TableColor,
   type TableConfig,
 } from "@/lib/admin/tables";
+import { toIsoDate } from "@/lib/schedule/next-night";
+import { resolveNextNight } from "@/lib/schedule/server";
+import {
+  isValidHhMm,
+  isValidTimezone,
+  localDateInTz,
+  splitHhMm,
+  zonedWallClockToUtc,
+} from "@/lib/schedule/zoned-time";
 
 const TableEntrySchema = z.object({
   name: z.string().trim().min(1).max(40),
@@ -54,18 +63,6 @@ export async function startTournament(input: {
   }
   const supabase = await createClient();
 
-  const { data: existing } = await supabase
-    .from("tournaments")
-    .select("id")
-    .in("status", ["scheduled", "running", "paused"])
-    .limit(1);
-  if (existing && existing.length > 0) {
-    return {
-      status: "error",
-      message: "Another tournament is already active. Finalize it first.",
-    };
-  }
-
   const { data: template, error: tplErr } = await supabase
     .from("tournament_templates")
     .select("*")
@@ -73,6 +70,93 @@ export async function startTournament(input: {
     .maybeSingle();
   if (tplErr || !template) {
     return { status: "error", message: tplErr?.message ?? "Template not found" };
+  }
+
+  // Compute the planned start instant. Two reasons we set it instead
+  // of leaving null:
+  //
+  //   1. The upcoming-list dedupe in lib/admin/upcoming.ts needs
+  //      `scheduled_at` to know this row already covers an occurrence
+  //      date — without it, the recurrence projection keeps showing up
+  //      alongside the materialized tournament and routes the admin
+  //      back here.
+  //
+  //   2. It's a real timestamp for sorting, history queries, and the
+  //      "Tonight, 7 PM CDT" home-page formatter.
+  //
+  // The logic mirrors lib/admin/upcoming.ts so a projection's date and
+  // the materialized scheduled_at agree.
+  let scheduledAt: string;
+  let scheduledLocalDate: string | null = null;
+  if (template.recurrence_rule) {
+    const next = await resolveNextNight(supabase, template);
+    if (next.kind === "ok") {
+      scheduledLocalDate = toIsoDate(next.next.effectiveDate);
+      if (
+        template.start_time &&
+        template.start_timezone &&
+        isValidHhMm(template.start_time) &&
+        isValidTimezone(template.start_timezone)
+      ) {
+        const [hour, minute] = splitHhMm(template.start_time);
+        const utc = zonedWallClockToUtc(
+          next.next.effectiveDate.getFullYear(),
+          next.next.effectiveDate.getMonth() + 1,
+          next.next.effectiveDate.getDate(),
+          hour,
+          minute,
+          template.start_timezone,
+        );
+        scheduledAt = utc.toISOString();
+      } else {
+        // Recurrence-only, no time-of-day. Noon UTC of the local date
+        // keeps the calendar date stable in any common zone.
+        scheduledAt = `${scheduledLocalDate}T12:00:00Z`;
+      }
+    } else {
+      scheduledAt = new Date().toISOString();
+    }
+  } else {
+    scheduledAt = new Date().toISOString();
+  }
+
+  // Forgiving guard: if the admin already created a scheduled
+  // tournament for this template+date, send them to the detail page
+  // instead of erroring with "another tournament is already active" or
+  // (worse) duplicating the row. Catches stale projection-click links
+  // that survive a cache or race.
+  if (scheduledLocalDate) {
+    const { data: existingForDate } = await supabase
+      .from("tournaments")
+      .select("id, scheduled_at")
+      .eq("template_id", template.id)
+      .eq("status", "scheduled");
+    const match = (existingForDate ?? []).find((row) => {
+      if (!row.scheduled_at) return false;
+      const rowDate =
+        template.start_timezone && isValidTimezone(template.start_timezone)
+          ? localDateInTz(new Date(row.scheduled_at), template.start_timezone)
+          : row.scheduled_at.slice(0, 10);
+      return rowDate === scheduledLocalDate;
+    });
+    if (match) {
+      redirect(`/admin/tournaments/${match.id}`);
+    }
+  }
+
+  // Only-one-active guard for the remaining case: no scheduled row for
+  // this template+date, but something else is running/paused/scheduled
+  // and would conflict with starting another.
+  const { data: active } = await supabase
+    .from("tournaments")
+    .select("id")
+    .in("status", ["scheduled", "running", "paused"])
+    .limit(1);
+  if (active && active.length > 0) {
+    return {
+      status: "error",
+      message: "Another tournament is already active. Finalize it first.",
+    };
   }
 
   const { data: structure, error: bsErr } = await supabase
@@ -89,6 +173,7 @@ export async function startTournament(input: {
     .insert({
       template_id: template.id,
       status: "scheduled",
+      scheduled_at: scheduledAt,
       buy_in_snapshot: template.buy_in,
       starting_stack_snapshot: template.starting_stack,
       max_rebuys_snapshot: template.max_rebuys,

@@ -74,6 +74,23 @@ export function zonedWallClockToUtc(
 }
 
 /**
+ * Format a UTC `Date` as a YYYY-MM-DD calendar date *in the given
+ * IANA zone*. Used to derive an occurrence date from a stored
+ * `scheduled_at` (timestamptz) — `.slice(0, 10)` on the raw ISO is
+ * UTC and can off-by-one a row stored for an evening event in any
+ * west-of-UTC zone. en-CA gives the ISO order without manual padding.
+ */
+export function localDateInTz(date: Date, tz: string): string {
+  const fmt = new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  return fmt.format(date);
+}
+
+/**
  * Get a short timezone abbreviation ("CDT", "PST", "GMT+1") suitable
  * for inline display next to a formatted time. Falls back to the
  * IANA name if the short form isn't available in the runtime.
