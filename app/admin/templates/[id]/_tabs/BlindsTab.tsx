@@ -104,7 +104,16 @@ export function BlindsTab({
       </p>
 
       <ul className="flex flex-col gap-2">
-        {levels.map((l, i) => (
+        {levels.map((l, i) => {
+          // Position label matches the TV / tournament detail page:
+          // "L4" for the 4th playable level so far, "B2" for the 2nd
+          // break. Counted via filter rather than mutable counters so
+          // the render stays pure (React's reassignment lint rule).
+          const sameKindCount = levels
+            .slice(0, i + 1)
+            .filter((x) => x.is_break === l.is_break).length;
+          const label = `${l.is_break ? "B" : "L"}${sameKindCount}`;
+          return (
           <li
             key={l._key}
             className={`rounded-md border ${
@@ -113,7 +122,7 @@ export function BlindsTab({
           >
             <div className="flex items-baseline justify-between">
               <p className="text-label text-[11px] font-semibold uppercase tracking-widest">
-                Level {i + 1} {l.is_break ? "· Break" : ""}
+                {label} {l.is_break ? "· Break" : ""}
               </p>
               <div className="flex items-center gap-1">
                 <IconBtn
@@ -182,7 +191,8 @@ export function BlindsTab({
               </div>
             )}
           </li>
-        ))}
+          );
+        })}
       </ul>
 
       <div className="flex gap-2">

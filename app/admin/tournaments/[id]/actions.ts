@@ -6,6 +6,7 @@ import { z } from "zod";
 
 import { requireAdmin } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
+import { createServiceClient } from "@/lib/supabase/service";
 import { blindLevels } from "@/lib/admin/queries";
 import {
   computeBalanceMoves,
@@ -635,6 +636,125 @@ export async function decideColorUp(input: {
   });
 
   await refresh(req.tournament_id);
+}
+
+const ManualColorUpSchema = z.object({
+  tournamentPlayerId: z.uuid(),
+  submittedTotal: z.coerce.number().int().min(0).max(1_000_000),
+  receivedTotal: z.coerce.number().int().min(0).max(1_000_000),
+});
+
+/**
+ * Admin-direct color-up entry. The standard flow is player-submits-via-
+ * /play → admin-approves-via-ColorUpInbox, but the room sometimes wants
+ * the admin to record an exchange on the spot (player handed chips
+ * across the table, no /play submission). This action mirrors the
+ * decide-and-approve path: it persists a color_up_requests row with
+ * status='approved', bumps the player's current_chips by the round-up
+ * delta, and appends a tournament_events row — so the downstream
+ * tournament-wide chip-pool readers (getApprovedColorUpGains) and TV
+ * accounting work identically to the player-submitted flow.
+ *
+ * Uses the service client to bypass the session-tied INSERT policy on
+ * color_up_requests (which exists to prevent unclaimed-session spam
+ * from /play but blocks legitimate admin entries).
+ */
+export async function applyManualColorUp(input: {
+  tournamentPlayerId: string;
+  submittedTotal: number;
+  receivedTotal: number;
+}): Promise<AdminActionResult> {
+  return runAdminAction(async () => {
+    await requireAdmin();
+    const { tournamentPlayerId, submittedTotal, receivedTotal } =
+      ManualColorUpSchema.parse(input);
+    const supabase = await createClient();
+
+    const { data: tp } = await supabase
+      .from("tournament_players")
+      .select(
+        "id, tournament_id, player_id, current_chips, busted_at_time",
+      )
+      .eq("id", tournamentPlayerId)
+      .maybeSingle();
+    if (!tp) throw new Error("Player slot not found");
+    if (tp.busted_at_time) {
+      throw new Error("Can't color-up a busted player.");
+    }
+    if (!tp.player_id) {
+      throw new Error("Player slot has no linked player.");
+    }
+
+    const { data: t } = await supabase
+      .from("tournaments")
+      .select("status")
+      .eq("id", tp.tournament_id)
+      .maybeSingle();
+    if (!t) throw new Error("Tournament not found");
+    if (t.status !== "running" && t.status !== "paused") {
+      throw new Error(
+        `Color-up is only available while the tournament is running or paused (currently ${t.status}).`,
+      );
+    }
+
+    const netChange = receivedTotal - submittedTotal;
+
+    // Service client: bypasses the session-tied RLS INSERT policy on
+    // color_up_requests (which prevents anon spam from /play but blocks
+    // legitimate admin-initiated rows). All other admin paths already
+    // do this kind of thing through createServiceClient.
+    const service = createServiceClient();
+
+    const nowIso = new Date().toISOString();
+    const { data: inserted, error: insErr } = await service
+      .from("color_up_requests")
+      .insert({
+        tournament_id: tp.tournament_id,
+        player_id: tp.player_id,
+        // No real session — admin entry. The schema requires text NOT
+        // NULL, so a sentinel keeps the audit trail readable without
+        // ever colliding with a real /play session id.
+        session_id: "admin-manual",
+        submitted_chips: { total: submittedTotal, chips: [] },
+        exchange_for_chips: {
+          total: receivedTotal,
+          chips: [],
+          net_change: netChange,
+        },
+        status: "approved",
+        processed_at: nowIso,
+      })
+      .select("id")
+      .single();
+    if (insErr || !inserted) {
+      throw new Error(insErr?.message ?? "Could not record color-up");
+    }
+
+    if (netChange !== 0) {
+      const nextChips = Math.max(0, (tp.current_chips ?? 0) + netChange);
+      const { error: chipErr } = await service
+        .from("tournament_players")
+        .update({ current_chips: nextChips })
+        .eq("id", tp.id);
+      if (chipErr) throw new Error(chipErr.message);
+    }
+
+    await service.from("tournament_events").insert({
+      tournament_id: tp.tournament_id,
+      type: "color_up",
+      payload: {
+        request_id: inserted.id,
+        decision: "approved",
+        player_id: tp.player_id,
+        submitted_total: submittedTotal,
+        new_total: receivedTotal,
+        net_change: netChange,
+        source: "admin-manual",
+      },
+    });
+
+    await refresh(tp.tournament_id);
+  });
 }
 
 const FinalizeOptionsSchema = z

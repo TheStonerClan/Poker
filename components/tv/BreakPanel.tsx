@@ -1,4 +1,5 @@
 import { formatBlinds, formatMMSS } from "@/lib/tv/format";
+import { formatLevelLabel } from "@/lib/tv/levels";
 import type { BlindLevelEntry } from "@/lib/tv/types";
 
 type BustedEntry = {
@@ -11,6 +12,8 @@ type Props = {
   remainingSec: number;
   level: BlindLevelEntry;
   nextLevel: BlindLevelEntry | null;
+  /** Full level list — used to label "L4" / "B2" instead of raw level_num. */
+  levels: BlindLevelEntry[];
   busted: BustedEntry[];
 };
 
@@ -18,6 +21,7 @@ export default function BreakPanel({
   remainingSec,
   level,
   nextLevel,
+  levels,
   busted,
 }: Props) {
   const colorUp = level.color_up_chips ?? [];
@@ -52,7 +56,7 @@ export default function BreakPanel({
           </h3>
           <p className="font-mono text-value text-3xl tabular-nums mt-1">
             {nextLevel
-              ? `L${nextLevel.level_num} — ${formatBlinds(
+              ? `${formatLevelLabel(levels, nextLevel.level_num)} — ${formatBlinds(
                   nextLevel.small,
                   nextLevel.big,
                   nextLevel.ante,
@@ -76,7 +80,11 @@ export default function BreakPanel({
                 >
                   <span className="text-value">{b.name}</span>
                   <span className="text-label text-sm">
-                    {b.rebought ? "rebought" : `L${b.level ?? "?"}`}
+                    {b.rebought
+                      ? "rebought"
+                      : b.level != null
+                        ? formatLevelLabel(levels, b.level)
+                        : "?"}
                   </span>
                 </li>
               ))}

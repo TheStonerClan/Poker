@@ -1,9 +1,14 @@
 import { formatBlinds } from "@/lib/tv/format";
+import { formatLevelLabel } from "@/lib/tv/levels";
 import type { BlindLevelEntry } from "@/lib/tv/types";
 
-type Props = { next: BlindLevelEntry | null };
+type Props = {
+  next: BlindLevelEntry | null;
+  /** Full level list — used to render "B2" for an upcoming break. */
+  levels: BlindLevelEntry[];
+};
 
-export default function NextLevel({ next }: Props) {
+export default function NextLevel({ next, levels }: Props) {
   return (
     <div className="flex flex-col items-end text-right">
       <span className="text-label uppercase tracking-[0.25em] text-xs">
@@ -13,7 +18,7 @@ export default function NextLevel({ next }: Props) {
         {next && !next.is_break
           ? formatBlinds(next.small, next.big, next.ante)
           : next?.is_break
-            ? "Break"
+            ? formatLevelLabel(levels, next.level_num)
             : "—"}
       </span>
     </div>

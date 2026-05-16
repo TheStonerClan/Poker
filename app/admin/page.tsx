@@ -17,6 +17,7 @@ import {
   type UpcomingTournament,
 } from "@/lib/admin/upcoming";
 
+import { AutoAdvanceWatcher } from "./_components/AutoAdvanceWatcher";
 import { LevelControls } from "./_components/LevelControls";
 import { QuickBustList } from "./_components/QuickBustList";
 
@@ -74,6 +75,17 @@ export default async function AdminDashboardPage() {
 
   return (
     <>
+      <AutoAdvanceWatcher
+        tournament={{
+          id: tournament.id,
+          status: tournament.status,
+          current_level: tournament.current_level,
+          level_started_at: tournament.level_started_at,
+          level_paused_at: tournament.level_paused_at,
+          accumulated_pause_ms: tournament.accumulated_pause_ms,
+          blind_structure_snapshot: tournament.blind_structure_snapshot,
+        }}
+      />
       <TopBar
         title="Tonight"
         subtitle={`${tournament.status.toUpperCase()} · Level ${tournament.current_level}`}

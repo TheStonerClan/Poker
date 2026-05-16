@@ -19,6 +19,7 @@ import { useDriftSync } from "@/lib/timer/useDriftSync";
 import { useLevelClock } from "@/lib/timer/useLevelClock";
 import { aggregatePlayers } from "@/lib/tv/aggregate";
 import {
+  formatLevelLabel,
   getLevel,
   getNextPlayingLevel,
   parseLevels,
@@ -82,6 +83,60 @@ export default function TvDisplay({
     }, 1500);
     return () => window.clearTimeout(t);
   }, [tournament.status]);
+
+  // Screen Wake Lock — keep the display awake while /tv is mounted so a
+  // Mac Mini / iPad running the TV doesn't sleep its screen mid-level.
+  // Without this, a sleeping display takes the page off the foreground,
+  // setInterval is throttled, the 250ms heartbeat slows to a crawl, and
+  // the auto-advance effect can miss the timer-expiry transition. The
+  // API is best-effort: not all browsers support it (notably old
+  // Safari), permission can be denied, and the lock is auto-released
+  // when the tab is hidden — so we re-request on visibilitychange.
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !("wakeLock" in navigator)) {
+      return;
+    }
+    type WakeLockSentinel = {
+      released: boolean;
+      release: () => Promise<void>;
+      addEventListener: (type: "release", cb: () => void) => void;
+    };
+    type WakeLockApi = { request: (type: "screen") => Promise<WakeLockSentinel> };
+    const wakeLockApi = (navigator as unknown as { wakeLock?: WakeLockApi })
+      .wakeLock;
+    if (!wakeLockApi) return;
+
+    let sentinel: WakeLockSentinel | null = null;
+    let cancelled = false;
+
+    async function acquire() {
+      try {
+        const s = await wakeLockApi!.request("screen");
+        if (cancelled) {
+          s.release().catch(() => {});
+          return;
+        }
+        sentinel = s;
+      } catch {
+        // Lock denied / page not visible. visibilitychange handler will
+        // retry once the page is foregrounded.
+      }
+    }
+
+    function onVisibilityChange() {
+      if (document.visibilityState === "visible") {
+        acquire();
+      }
+    }
+
+    acquire();
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      cancelled = true;
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      sentinel?.release().catch(() => {});
+    };
+  }, []);
 
   const onPlayers = useCallback(async () => {
     try {
@@ -156,11 +211,34 @@ export default function TvDisplay({
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ expectedLevel: currentLevel.level_num }),
       cache: "no-store",
-    }).catch(() => {
-      // Network blip: drift sync will retry. Reset the ref so the next
-      // tick can attempt again rather than staying stuck.
-      autoAdvanceRef.current = null;
-    });
+    })
+      .then(async (res) => {
+        // Earlier bug: a non-OK or "not advanced (yet)" response left
+        // the ref set to the level key, so subsequent renders saw a
+        // match and skipped the retry indefinitely — the timer would
+        // sit at 0:00 until the admin intervened. The ref only stays
+        // set when the server CONFIRMED an advance happened or there
+        // genuinely is no next level. Every other outcome resets the
+        // ref so the next drift-sync tick (3s) tries again.
+        if (!res.ok) {
+          autoAdvanceRef.current = null;
+          return;
+        }
+        try {
+          const body = (await res.json()) as {
+            advanced?: boolean;
+            reason?: string;
+          };
+          if (body.advanced === true) return;
+          if (body.reason === "at last level") return;
+          autoAdvanceRef.current = null;
+        } catch {
+          autoAdvanceRef.current = null;
+        }
+      })
+      .catch(() => {
+        autoAdvanceRef.current = null;
+      });
   }, [
     tournamentId,
     tournament.status,
@@ -333,7 +411,7 @@ export default function TvDisplay({
       <header className="grid grid-cols-2 items-center px-[clamp(1rem,3vw,3rem)] pt-[clamp(0.75rem,2vh,2rem)] pb-[clamp(0.5rem,1.5vh,1.5rem)]">
         <PlayerHeader counts={counts} showAddOns={showAddOns} />
         <div className="justify-self-end">
-          <BlindLevel level={currentLevel} align="right" />
+          <BlindLevel level={currentLevel} levels={levels} align="right" />
         </div>
       </header>
 
@@ -351,11 +429,16 @@ export default function TvDisplay({
               remainingSec={clock.remainingSec}
               level={currentLevel}
               nextLevel={nextPlayingLevel}
+              levels={levels}
               busted={lastSegmentBusted}
             />
           ) : (
             <ClockRing
-              levelLabel={`Level ${tournament.current_level || 1}`}
+              levelLabel={
+                currentLevel
+                  ? formatLevelLabel(levels, currentLevel.level_num)
+                  : "L1"
+              }
               remainingSec={clock.remainingSec}
               durationSec={durationSec}
               nextBreakSec={nextBreakSec}
@@ -403,7 +486,7 @@ export default function TvDisplay({
               </span>
             </div>
           ) : null}
-          <NextLevel next={nextPlayingLevel} />
+          <NextLevel next={nextPlayingLevel} levels={levels} />
         </div>
       </footer>
 
