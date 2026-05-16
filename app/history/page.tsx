@@ -195,15 +195,16 @@ export default async function HistoryPage({
       range={range}
       subtitle={`${rangeLabel(range)} · ${tournaments.length} tournament${tournaments.length === 1 ? "" : "s"} · ${leaderboard.length} player${leaderboard.length === 1 ? "" : "s"}`}
     >
-      {/* Headline cards */}
-      <section className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+      {/* Headline cards. Entries is starting players only; rebuys
+          and add-ons are their own cards so the same number isn't
+          getting mixed in twice (matches the per-tournament summary
+          rows below). */}
+      <section className="grid grid-cols-2 gap-2 sm:grid-cols-5">
         <Headline label="Tournaments" value={tournaments.length.toString()} />
-        <Headline
-          label="Entries"
-          value={formatChips(totalEntries + totalRebuys)}
-        />
-        <Headline label="Pool paid" value={formatMoney(totalPool)} />
+        <Headline label="Entries" value={formatChips(totalEntries)} />
+        <Headline label="Rebuys" value={formatChips(totalRebuys)} />
         <Headline label="Add-ons" value={formatChips(totalAddOns)} />
+        <Headline label="Pool paid" value={formatMoney(totalPool)} />
       </section>
 
       {/* Season leaderboard — points-first, sortable by every other
