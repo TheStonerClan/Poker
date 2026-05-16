@@ -18,6 +18,7 @@ import {
 } from "@/lib/admin/chip-snapshots";
 import { formatBlinds, formatChips, formatMoney } from "@/lib/admin/format";
 import { createClient } from "@/lib/supabase/server";
+import { formatLevelLabel, levelCounts } from "@/lib/tv/levels";
 import { computePayouts } from "prize-math";
 
 import {
@@ -28,6 +29,7 @@ import {
   TABLE_COLOR_CSS,
 } from "@/lib/admin/tables";
 
+import { AutoAdvanceWatcher } from "../../_components/AutoAdvanceWatcher";
 import { LevelControls } from "../../_components/LevelControls";
 import { PlayerGrid } from "./_components/PlayerGrid";
 import { ColorUpInbox } from "./_components/ColorUpInbox";
@@ -111,15 +113,26 @@ export default async function LiveTournamentPage({
     addOnAtBreakLevel?: number;
   };
 
-  const totalLevels = blindLevels(tournament.blind_structure_snapshot).reduce(
-    (m, l) => (l.level_num > m ? l.level_num : m),
-    0,
-  );
+  const levels = blindLevels(tournament.blind_structure_snapshot);
+  const counts = levelCounts(levels);
+  const curLabel = formatLevelLabel(levels, tournament.current_level);
+  const totalOfKind = cur?.is_break ? counts.breaks : counts.playable;
 
   return (
     <>
+      <AutoAdvanceWatcher
+        tournament={{
+          id: tournament.id,
+          status: tournament.status,
+          current_level: tournament.current_level,
+          level_started_at: tournament.level_started_at,
+          level_paused_at: tournament.level_paused_at,
+          accumulated_pause_ms: tournament.accumulated_pause_ms,
+          blind_structure_snapshot: tournament.blind_structure_snapshot,
+        }}
+      />
       <TopBar
-        title={`Level ${tournament.current_level}/${totalLevels}`}
+        title={`${curLabel} of ${totalOfKind}`}
         subtitle={`${tournament.status.toUpperCase()} · ${formatBlinds(cur)}`}
         back={{ href: "/admin", label: "Dashboard" }}
         action={

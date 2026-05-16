@@ -19,6 +19,7 @@ import { useDriftSync } from "@/lib/timer/useDriftSync";
 import { useLevelClock } from "@/lib/timer/useLevelClock";
 import { aggregatePlayers } from "@/lib/tv/aggregate";
 import {
+  formatLevelLabel,
   getLevel,
   getNextPlayingLevel,
   parseLevels,
@@ -333,7 +334,7 @@ export default function TvDisplay({
       <header className="grid grid-cols-2 items-center px-[clamp(1rem,3vw,3rem)] pt-[clamp(0.75rem,2vh,2rem)] pb-[clamp(0.5rem,1.5vh,1.5rem)]">
         <PlayerHeader counts={counts} showAddOns={showAddOns} />
         <div className="justify-self-end">
-          <BlindLevel level={currentLevel} align="right" />
+          <BlindLevel level={currentLevel} levels={levels} align="right" />
         </div>
       </header>
 
@@ -351,11 +352,16 @@ export default function TvDisplay({
               remainingSec={clock.remainingSec}
               level={currentLevel}
               nextLevel={nextPlayingLevel}
+              levels={levels}
               busted={lastSegmentBusted}
             />
           ) : (
             <ClockRing
-              levelLabel={`Level ${tournament.current_level || 1}`}
+              levelLabel={
+                currentLevel
+                  ? formatLevelLabel(levels, currentLevel.level_num)
+                  : "L1"
+              }
               remainingSec={clock.remainingSec}
               durationSec={durationSec}
               nextBreakSec={nextBreakSec}
@@ -403,7 +409,7 @@ export default function TvDisplay({
               </span>
             </div>
           ) : null}
-          <NextLevel next={nextPlayingLevel} />
+          <NextLevel next={nextPlayingLevel} levels={levels} />
         </div>
       </footer>
 
