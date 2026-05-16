@@ -295,7 +295,10 @@ export function buildTournamentSummaries(args: {
     return {
       id: t.id,
       finishedAt: t.finished_at,
-      entries: tournRoster.length + rebuys, // each rebuy is its own paid entry
+      // Starting roster size only — rebuys and add-ons are shown as
+      // separate counts beside this number so combining them confused
+      // the admin (a 13-player game with 6 rebuys read as "19 entries").
+      entries: tournRoster.length,
       rebuys,
       addOns,
       prizePool,
