@@ -10,6 +10,7 @@ import {
   buildLeaderboard,
   buildPlayerStats,
   buildTournamentSummaries,
+  F1_POINTS_TABLE,
   HISTORY_RANGES,
   isHistoryRange,
   rangeLabel,
@@ -23,6 +24,9 @@ import {
   type TokenEvent,
 } from "@/lib/admin/history-stats";
 import { createServiceClient } from "@/lib/supabase/service";
+
+import { PerPlayerStatsTable } from "./_components/PerPlayerStatsTable";
+import { SeasonLeaderboardTable } from "./_components/SeasonLeaderboardTable";
 
 export const dynamic = "force-dynamic";
 
@@ -202,77 +206,19 @@ export default async function HistoryPage({
         <Headline label="Add-ons" value={formatChips(totalAddOns)} />
       </section>
 
-      {/* Net leaderboard — wins + payout + cost basis */}
+      {/* Season leaderboard — points-first, sortable by every other
+          metric on header click. */}
       <section className="rounded-md border border-fg/10 p-4">
         <div className="mb-3 flex items-baseline justify-between gap-2">
           <h2 className="text-label text-[11px] font-semibold uppercase tracking-[0.25em]">
             Leaderboard
           </h2>
           <span className="text-[10px] uppercase tracking-widest text-fg/40">
-            Sorted by net (gross − buy-ins)
+            Tap a header to re-sort
           </span>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-[10px] uppercase tracking-widest text-fg/55">
-                <th className="py-1.5 pr-3">#</th>
-                <th className="py-1.5 pr-3">Player</th>
-                <th className="py-1.5 pr-3 text-right">Played</th>
-                <th className="py-1.5 pr-3 text-right">Wins</th>
-                <th className="py-1.5 pr-3 text-right">ITM</th>
-                <th className="py-1.5 pr-3 text-right">Gross</th>
-                <th className="py-1.5 pr-3 text-right">Cost basis</th>
-                <th className="py-1.5 text-right">Net</th>
-              </tr>
-            </thead>
-            <tbody>
-              {playerStats.slice(0, 15).map((row, i) => (
-                <tr
-                  key={row.playerId}
-                  className={`border-t border-fg/5 ${
-                    i === 0 ? "bg-gold/5" : ""
-                  }`}
-                >
-                  <td className="py-1.5 pr-3 font-mono text-fg/55 tabular-nums">
-                    {i + 1}
-                  </td>
-                  <td className="py-1.5 pr-3 font-semibold text-fg">
-                    {row.name}
-                  </td>
-                  <td className="py-1.5 pr-3 text-right font-mono tabular-nums text-fg/70">
-                    {row.tournamentsPlayed}
-                  </td>
-                  <td className="py-1.5 pr-3 text-right font-mono tabular-nums text-fg/70">
-                    {row.wins}
-                  </td>
-                  <td className="py-1.5 pr-3 text-right font-mono tabular-nums text-fg/70">
-                    {row.itmCount}
-                  </td>
-                  <td className="py-1.5 pr-3 text-right font-mono tabular-nums text-fg">
-                    {formatMoney(row.grossWinnings)}
-                  </td>
-                  <td className="py-1.5 pr-3 text-right font-mono tabular-nums text-fg/55">
-                    {formatMoney(row.costBasis)}
-                  </td>
-                  <td
-                    className={`py-1.5 text-right font-mono tabular-nums font-semibold ${
-                      row.net >= 0 ? "text-success" : "text-danger"
-                    }`}
-                  >
-                    {row.net >= 0 ? "+" : ""}
-                    {formatMoney(row.net)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        {playerStats.length > 15 ? (
-          <p className="mt-2 text-[10px] uppercase tracking-widest text-fg/40">
-            +{playerStats.length - 15} more players. Top 15 shown.
-          </p>
-        ) : null}
+        <SeasonLeaderboardTable rows={playerStats} maxRows={15} />
+        <PointsLegend />
       </section>
 
       {/* Win counts (legacy leaderboard) — kept as a quick "who's
@@ -314,60 +260,18 @@ export default async function HistoryPage({
         </ol>
       </section>
 
-      {/* Per-player rebuy / addon / bust stats — the granular view. */}
+      {/* Per-player rebuy / addon / bust stats — the granular view.
+          Sortable on every numeric column. */}
       <section className="rounded-md border border-fg/10 p-4">
-        <h2 className="text-label mb-3 text-[11px] font-semibold uppercase tracking-[0.25em]">
-          Per-player stats
-        </h2>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-[10px] uppercase tracking-widest text-fg/55">
-                <th className="py-1.5 pr-3">Player</th>
-                <th className="py-1.5 pr-3 text-right">Avg bust</th>
-                <th className="py-1.5 pr-3 text-right">Avg rebuy</th>
-                <th className="py-1.5 pr-3 text-right">Rebuy %</th>
-                <th className="py-1.5 pr-3 text-right">Add-ons</th>
-                <th className="py-1.5 text-right">Avg finish</th>
-              </tr>
-            </thead>
-            <tbody>
-              {[...playerStats]
-                .sort((a, b) => b.tournamentsPlayed - a.tournamentsPlayed)
-                .map((row) => (
-                  <tr key={row.playerId} className="border-t border-fg/5">
-                    <td className="py-1.5 pr-3 font-semibold text-fg">
-                      {row.name}
-                      <span className="ml-2 text-[10px] uppercase tracking-widest text-fg/40">
-                        {row.tournamentsPlayed} pl
-                      </span>
-                    </td>
-                    <td className="py-1.5 pr-3 text-right font-mono tabular-nums text-fg/70">
-                      {row.avgBustLevel != null
-                        ? `L${row.avgBustLevel.toFixed(1)}`
-                        : "—"}
-                    </td>
-                    <td className="py-1.5 pr-3 text-right font-mono tabular-nums text-fg/70">
-                      {row.avgRebuyLevel != null
-                        ? `L${row.avgRebuyLevel.toFixed(1)}`
-                        : "—"}
-                    </td>
-                    <td className="py-1.5 pr-3 text-right font-mono tabular-nums text-fg/70">
-                      {row.tournamentsPlayed > 0
-                        ? `${Math.round(row.rebuyRate * 100)}%`
-                        : "—"}
-                    </td>
-                    <td className="py-1.5 pr-3 text-right font-mono tabular-nums text-fg/70">
-                      {row.totalAddOns}
-                    </td>
-                    <td className="py-1.5 text-right font-mono tabular-nums text-fg/70">
-                      {row.avgFinish != null ? row.avgFinish.toFixed(1) : "—"}
-                    </td>
-                  </tr>
-                ))}
-            </tbody>
-          </table>
+        <div className="mb-3 flex items-baseline justify-between gap-2">
+          <h2 className="text-label text-[11px] font-semibold uppercase tracking-[0.25em]">
+            Per-player stats
+          </h2>
+          <span className="text-[10px] uppercase tracking-widest text-fg/40">
+            Tap a header to re-sort
+          </span>
         </div>
+        <PerPlayerStatsTable rows={playerStats} />
       </section>
 
       {/* Rebuy + addon cohorts — three short ranked lists. */}
@@ -574,6 +478,35 @@ function Headline({ label, value }: { label: string; value: string }) {
         {label}
       </p>
       <p className="mt-1 font-mono text-2xl tabular-nums text-fg">{value}</p>
+    </div>
+  );
+}
+
+function PointsLegend() {
+  // Render the 1..9 row from F1_POINTS_TABLE (index 0 is the unused
+  // sentinel). The text below explains the > 9 rule so the admin
+  // doesn't have to count cells.
+  const entries = F1_POINTS_TABLE.slice(1).map((pts, i) => ({
+    position: i + 1,
+    points: pts,
+  }));
+  return (
+    <div className="mt-3 rounded-md border border-fg/10 bg-fg/[0.02] px-3 py-2.5">
+      <p className="text-[10px] font-semibold uppercase tracking-widest text-fg/55">
+        How points work
+      </p>
+      <p className="mt-1 text-xs text-fg/70">
+        F1-style scoring per tournament. Sum across the window = season
+        total. Position 10+ scores zero.
+      </p>
+      <ul className="mt-2 flex flex-wrap gap-x-3 gap-y-1 font-mono text-[11px] tabular-nums text-fg/70">
+        {entries.map((e) => (
+          <li key={e.position}>
+            <span className="text-fg/45">P{e.position}</span>{" "}
+            <span className="font-semibold text-fg">{e.points}</span>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

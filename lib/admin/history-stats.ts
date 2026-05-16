@@ -106,6 +106,37 @@ export type BustEvent = {
 
 // ─── Leaderboard ────────────────────────────────────────────────────────────
 
+/**
+ * F1-style season points awarded per finishing position. The whole
+ * season standings reduce to "sum of these across every tournament a
+ * player entered" — players who never cashed still bank points for
+ * lasting longer than the bust-outs below them.
+ *
+ *   1st = 12 · 2nd = 10 · 3rd = 8 · 4th = 6 · 5th = 5 · 6th = 4 ·
+ *   7th = 3 · 8th = 2 · 9th = 1 · 10th+ = 0
+ *
+ * Positions 4..9 decay by 1; the 12/10/8 head spread out the podium.
+ * Mirrors the spec in PR #40 — keep the table here as the source of
+ * truth; UI explains it via this same shape.
+ */
+export const F1_POINTS_TABLE: readonly number[] = [
+  0, // index 0 unused; positions are 1-based
+  12,
+  10,
+  8,
+  6,
+  5,
+  4,
+  3,
+  2,
+  1,
+] as const;
+
+export function f1Points(position: number | null | undefined): number {
+  if (position == null || !Number.isFinite(position) || position < 1) return 0;
+  return F1_POINTS_TABLE[position] ?? 0;
+}
+
 export type LeaderboardRow = {
   playerId: string;
   name: string;
@@ -407,6 +438,12 @@ function tournamentCostBasis(
 export type PlayerStatsRow = {
   playerId: string;
   name: string;
+  /**
+   * Sum of `f1Points(finishing_position)` across the window. The
+   * primary leaderboard sort key — finishing later (better) earns more
+   * points even when the player wasn't in the money.
+   */
+  points: number;
   /** Tournaments the player entered in the window. */
   tournamentsPlayed: number;
   /** Tournaments where finishing_position === 1. */
@@ -476,6 +513,7 @@ export function buildPlayerStats(args: {
 
   type Acc = {
     name: string;
+    points: number;
     tournamentsPlayed: Set<string>;
     tournamentsWithRebuy: Set<string>;
     wins: number;
@@ -494,6 +532,7 @@ export function buildPlayerStats(args: {
     if (!acc) {
       acc = {
         name,
+        points: 0,
         tournamentsPlayed: new Set(),
         tournamentsWithRebuy: new Set(),
         wins: 0,
@@ -520,6 +559,7 @@ export function buildPlayerStats(args: {
     if (r.finishing_position === 1) acc.wins += 1;
     if (r.finishing_position != null) {
       acc.finishingPositions.push(r.finishing_position);
+      acc.points += f1Points(r.finishing_position);
     }
     if (r.busted_at_level != null) {
       acc.bustLevels.push(r.busted_at_level);
@@ -587,6 +627,7 @@ export function buildPlayerStats(args: {
     rows.push({
       playerId,
       name: acc.name,
+      points: acc.points,
       tournamentsPlayed,
       wins: acc.wins,
       itmCount: acc.itmTournaments.size,
@@ -602,12 +643,14 @@ export function buildPlayerStats(args: {
     });
   }
 
-  // Default sort: net winnings DESC, then wins, then payout. The UI
-  // can re-sort by other columns.
+  // Default sort: F1 points DESC, then wins, then net. Points already
+  // weight finishing position, so ties usually break naturally — wins
+  // and net are belt-and-suspenders for back-to-back podium finishers.
+  // The UI can re-sort by any other column on click.
   rows.sort((a, b) => {
-    if (b.net !== a.net) return b.net - a.net;
+    if (b.points !== a.points) return b.points - a.points;
     if (b.wins !== a.wins) return b.wins - a.wins;
-    return b.grossWinnings - a.grossWinnings;
+    return b.net - a.net;
   });
 
   return rows;
