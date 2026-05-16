@@ -84,6 +84,60 @@ export default function TvDisplay({
     return () => window.clearTimeout(t);
   }, [tournament.status]);
 
+  // Screen Wake Lock — keep the display awake while /tv is mounted so a
+  // Mac Mini / iPad running the TV doesn't sleep its screen mid-level.
+  // Without this, a sleeping display takes the page off the foreground,
+  // setInterval is throttled, the 250ms heartbeat slows to a crawl, and
+  // the auto-advance effect can miss the timer-expiry transition. The
+  // API is best-effort: not all browsers support it (notably old
+  // Safari), permission can be denied, and the lock is auto-released
+  // when the tab is hidden — so we re-request on visibilitychange.
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !("wakeLock" in navigator)) {
+      return;
+    }
+    type WakeLockSentinel = {
+      released: boolean;
+      release: () => Promise<void>;
+      addEventListener: (type: "release", cb: () => void) => void;
+    };
+    type WakeLockApi = { request: (type: "screen") => Promise<WakeLockSentinel> };
+    const wakeLockApi = (navigator as unknown as { wakeLock?: WakeLockApi })
+      .wakeLock;
+    if (!wakeLockApi) return;
+
+    let sentinel: WakeLockSentinel | null = null;
+    let cancelled = false;
+
+    async function acquire() {
+      try {
+        const s = await wakeLockApi!.request("screen");
+        if (cancelled) {
+          s.release().catch(() => {});
+          return;
+        }
+        sentinel = s;
+      } catch {
+        // Lock denied / page not visible. visibilitychange handler will
+        // retry once the page is foregrounded.
+      }
+    }
+
+    function onVisibilityChange() {
+      if (document.visibilityState === "visible") {
+        acquire();
+      }
+    }
+
+    acquire();
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      cancelled = true;
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      sentinel?.release().catch(() => {});
+    };
+  }, []);
+
   const onPlayers = useCallback(async () => {
     try {
       const res = await fetch(`/api/tv/${tournamentId}/players`, {
@@ -157,11 +211,34 @@ export default function TvDisplay({
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ expectedLevel: currentLevel.level_num }),
       cache: "no-store",
-    }).catch(() => {
-      // Network blip: drift sync will retry. Reset the ref so the next
-      // tick can attempt again rather than staying stuck.
-      autoAdvanceRef.current = null;
-    });
+    })
+      .then(async (res) => {
+        // Earlier bug: a non-OK or "not advanced (yet)" response left
+        // the ref set to the level key, so subsequent renders saw a
+        // match and skipped the retry indefinitely — the timer would
+        // sit at 0:00 until the admin intervened. The ref only stays
+        // set when the server CONFIRMED an advance happened or there
+        // genuinely is no next level. Every other outcome resets the
+        // ref so the next drift-sync tick (3s) tries again.
+        if (!res.ok) {
+          autoAdvanceRef.current = null;
+          return;
+        }
+        try {
+          const body = (await res.json()) as {
+            advanced?: boolean;
+            reason?: string;
+          };
+          if (body.advanced === true) return;
+          if (body.reason === "at last level") return;
+          autoAdvanceRef.current = null;
+        } catch {
+          autoAdvanceRef.current = null;
+        }
+      })
+      .catch(() => {
+        autoAdvanceRef.current = null;
+      });
   }, [
     tournamentId,
     tournament.status,

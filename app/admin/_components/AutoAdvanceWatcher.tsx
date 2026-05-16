@@ -86,11 +86,31 @@ export function AutoAdvanceWatcher({
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ expectedLevel: currentLevel.level_num }),
       cache: "no-store",
-    }).catch(() => {
-      // Network blip — clear so the next drift-sync re-render gets a
-      // fresh chance to fire.
-      autoAdvanceRef.current = null;
-    });
+    })
+      .then(async (res) => {
+        // Keep the ref set only when the server CONFIRMED an advance
+        // happened or there genuinely is no next level. Every other
+        // outcome resets the ref so the next drift-sync tick (3s) can
+        // try again. See TvDisplay's matching block for the why.
+        if (!res.ok) {
+          autoAdvanceRef.current = null;
+          return;
+        }
+        try {
+          const body = (await res.json()) as {
+            advanced?: boolean;
+            reason?: string;
+          };
+          if (body.advanced === true) return;
+          if (body.reason === "at last level") return;
+          autoAdvanceRef.current = null;
+        } catch {
+          autoAdvanceRef.current = null;
+        }
+      })
+      .catch(() => {
+        autoAdvanceRef.current = null;
+      });
   }, [
     tournament.id,
     tournament.status,
