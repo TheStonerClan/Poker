@@ -10,6 +10,8 @@ import {
 import { formatChips } from "@/lib/admin/format";
 import type { LatestSnapshot } from "@/lib/admin/chip-snapshots";
 
+import { ManualColorUpButton } from "./ManualColorUpButton";
+
 type Row = {
   id: string;
   name: string;
@@ -169,6 +171,13 @@ export function PlayerGrid({
                         setPendingId(null);
                       });
                     }}
+                  />
+                ) : null}
+                {!r.busted ? (
+                  <ManualColorUpButton
+                    tournamentPlayerId={r.id}
+                    playerName={r.name}
+                    currentChips={r.chips}
                   />
                 ) : null}
               </div>
