@@ -59,6 +59,218 @@ export type Database = {
         }
         Relationships: []
       }
+      hands: {
+        Row: {
+          ante: number
+          bb_seat: number
+          big_blind: number
+          completed_at: string | null
+          current_street: string
+          dealer_seat: number
+          hand_number: number
+          id: string
+          level_num: number
+          notes: string | null
+          sb_seat: number
+          small_blind: number
+          started_at: string
+          status: string
+          table_number: number
+          tournament_id: string
+        }
+        Insert: {
+          ante?: number
+          bb_seat: number
+          big_blind: number
+          completed_at?: string | null
+          current_street?: string
+          dealer_seat: number
+          hand_number: number
+          id?: string
+          level_num: number
+          notes?: string | null
+          sb_seat: number
+          small_blind: number
+          started_at?: string
+          status?: string
+          table_number: number
+          tournament_id: string
+        }
+        Update: {
+          ante?: number
+          bb_seat?: number
+          big_blind?: number
+          completed_at?: string | null
+          current_street?: string
+          dealer_seat?: number
+          hand_number?: number
+          id?: string
+          level_num?: number
+          notes?: string | null
+          sb_seat?: number
+          small_blind?: number
+          started_at?: string
+          status?: string
+          table_number?: number
+          tournament_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "hands_tournament_id_fkey"
+            columns: ["tournament_id"]
+            isOneToOne: false
+            referencedRelation: "tournaments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      hand_seats: {
+        Row: {
+          current_chips: number
+          hand_id: string
+          is_all_in: boolean
+          is_folded: boolean
+          seat_number: number
+          starting_chips: number
+          total_contributed: number
+          tournament_player_id: string
+        }
+        Insert: {
+          current_chips: number
+          hand_id: string
+          is_all_in?: boolean
+          is_folded?: boolean
+          seat_number: number
+          starting_chips: number
+          total_contributed?: number
+          tournament_player_id: string
+        }
+        Update: {
+          current_chips?: number
+          hand_id?: string
+          is_all_in?: boolean
+          is_folded?: boolean
+          seat_number?: number
+          starting_chips?: number
+          total_contributed?: number
+          tournament_player_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "hand_seats_hand_id_fkey"
+            columns: ["hand_id"]
+            isOneToOne: false
+            referencedRelation: "hands"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "hand_seats_tournament_player_id_fkey"
+            columns: ["tournament_player_id"]
+            isOneToOne: false
+            referencedRelation: "tournament_players"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      hand_actions: {
+        Row: {
+          action: string
+          amount: number
+          chips_remaining: number
+          created_at: string
+          hand_id: string
+          id: string
+          seat_number: number
+          sequence: number
+          street: string
+          tournament_player_id: string
+        }
+        Insert: {
+          action: string
+          amount?: number
+          chips_remaining: number
+          created_at?: string
+          hand_id: string
+          id?: string
+          seat_number: number
+          sequence: number
+          street: string
+          tournament_player_id: string
+        }
+        Update: {
+          action?: string
+          amount?: number
+          chips_remaining?: number
+          created_at?: string
+          hand_id?: string
+          id?: string
+          seat_number?: number
+          sequence?: number
+          street?: string
+          tournament_player_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "hand_actions_hand_id_fkey"
+            columns: ["hand_id"]
+            isOneToOne: false
+            referencedRelation: "hands"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "hand_actions_tournament_player_id_fkey"
+            columns: ["tournament_player_id"]
+            isOneToOne: false
+            referencedRelation: "tournament_players"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      hand_results: {
+        Row: {
+          amount_won: number
+          created_at: string
+          hand_id: string
+          id: string
+          is_split: boolean
+          pot_kind: string
+          tournament_player_id: string
+        }
+        Insert: {
+          amount_won: number
+          created_at?: string
+          hand_id: string
+          id?: string
+          is_split?: boolean
+          pot_kind: string
+          tournament_player_id: string
+        }
+        Update: {
+          amount_won?: number
+          created_at?: string
+          hand_id?: string
+          id?: string
+          is_split?: boolean
+          pot_kind?: string
+          tournament_player_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "hand_results_hand_id_fkey"
+            columns: ["hand_id"]
+            isOneToOne: false
+            referencedRelation: "hands"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "hand_results_tournament_player_id_fkey"
+            columns: ["tournament_player_id"]
+            isOneToOne: false
+            referencedRelation: "tournament_players"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       color_up_requests: {
         Row: {
           created_at: string
