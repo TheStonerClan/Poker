@@ -2,6 +2,8 @@ import { notFound, redirect } from "next/navigation";
 
 import { TopBar } from "@/components/admin/TopBar";
 import { getAuthContext } from "@/lib/auth/table-admin";
+import Link from "next/link";
+
 import { currentLevel } from "@/lib/admin/queries";
 import type {
   ColorUpRequest,
@@ -134,6 +136,16 @@ export default async function TableAdminPage({
   };
   const cur = currentLevel(tournament);
 
+  // Active hand at this table? Drives the "Resume hand" vs "Start
+  // hand" button label on the tracker entry.
+  const { data: activeHand } = await supabase
+    .from("hands")
+    .select("id, hand_number, current_street")
+    .eq("tournament_id", tournamentId)
+    .eq("table_number", tableNumber)
+    .eq("status", "active")
+    .maybeSingle();
+
   return (
     <>
       <TopBar
@@ -172,6 +184,25 @@ export default async function TableAdminPage({
             {inPlay.length} in play · {out.length} out · {tableCfg.max_seats}{" "}
             seats
           </p>
+        </section>
+
+        <section className="flex items-center gap-3 rounded-lg border border-fg/15 p-3">
+          <div className="min-w-0 flex-1">
+            <p className="text-label text-[11px] font-semibold uppercase tracking-[0.25em]">
+              {activeHand ? "Hand in progress" : "Hand tracker"}
+            </p>
+            <p className="mt-0.5 text-xs text-fg/55">
+              {activeHand
+                ? `Hand #${activeHand.hand_number} · ${activeHand.current_street}`
+                : "Log every fold / call / bet / raise. Blinds auto-post, pot auto-awards."}
+            </p>
+          </div>
+          <Link
+            href={`/table/${tournamentId}/${tableNumber}/hand`}
+            className="inline-flex h-11 min-h-[44px] items-center justify-center rounded-md bg-gold px-4 text-xs font-semibold uppercase tracking-wider text-bg"
+          >
+            {activeHand ? "Resume" : "Start hand"}
+          </Link>
         </section>
 
         {myColorUps.length > 0 ? (

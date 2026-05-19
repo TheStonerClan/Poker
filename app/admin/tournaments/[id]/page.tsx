@@ -371,6 +371,14 @@ export default async function LiveTournamentPage({
           <PlayerGrid
             currentLevel={tournament.current_level}
             buybackConfig={buybackCfg}
+            tableOptions={resolveTablesConfig({
+              tablesConfig: tournament.tables_config,
+              numTables: tournament.num_tables,
+              maxSeatsPerTable: tournament.max_seats_per_table,
+            }).map((cfg, i) => ({
+              number: i + 1,
+              name: cfg.name ?? `Table ${i + 1}`,
+            }))}
             rows={inPlay.map((r) => ({
               id: r.id,
               name: r.player?.name ?? "—",
@@ -378,6 +386,7 @@ export default async function LiveTournamentPage({
               busted: false,
               buybackUsed: r.buyback_used,
               buybackUsedAs: r.buyback_used_as,
+              tableNumber: r.table_number,
               latestSnapshot: r.player_id
                 ? (latestSnapshotByPlayer.get(r.player_id) ?? null)
                 : null,

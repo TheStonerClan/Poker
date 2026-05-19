@@ -12,6 +12,7 @@ import type { LatestSnapshot } from "@/lib/admin/chip-snapshots";
 
 import { ChipEditButton } from "./ChipEditButton";
 import { ManualColorUpButton } from "./ManualColorUpButton";
+import { MovePlayerButton } from "./MovePlayerButton";
 
 type Row = {
   id: string;
@@ -21,6 +22,8 @@ type Row = {
   bustedAtLevel?: number | null;
   buybackUsed: boolean;
   buybackUsedAs?: string | null;
+  /** Current table assignment; null for single-table tournaments. */
+  tableNumber?: number | null;
   /**
    * Player's most recent self-reported chip total (from /play during a
    * break). Drives the "Logged $X at L5 (+$200)" badge below the name.
@@ -28,6 +31,8 @@ type Row = {
    */
   latestSnapshot?: LatestSnapshot | null;
 };
+
+export type TableOption = { number: number; name: string };
 
 export function PlayerGrid({
   currentLevel,
@@ -40,6 +45,7 @@ export function PlayerGrid({
    * since a table admin doesn't take buyback money.
    */
   scope = "admin",
+  tableOptions = [],
 }: {
   currentLevel: number;
   buybackConfig: {
@@ -48,6 +54,12 @@ export function PlayerGrid({
   };
   rows: Row[];
   scope?: "admin" | "table";
+  /**
+   * Tables in this tournament. Drives the "Move to another table"
+   * affordance — only rendered when scope='admin' and at least one
+   * other table exists.
+   */
+  tableOptions?: TableOption[];
 }) {
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -196,6 +208,14 @@ export function PlayerGrid({
                     tournamentPlayerId={r.id}
                     playerName={r.name}
                     currentChips={r.chips}
+                  />
+                ) : null}
+                {!r.busted && scope === "admin" && tableOptions.length > 1 ? (
+                  <MovePlayerButton
+                    tournamentPlayerId={r.id}
+                    playerName={r.name}
+                    currentTableNumber={r.tableNumber ?? null}
+                    tableOptions={tableOptions}
                   />
                 ) : null}
               </div>
