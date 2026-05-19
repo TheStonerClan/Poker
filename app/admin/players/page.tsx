@@ -1,6 +1,7 @@
 import { TopBar } from "@/components/admin/TopBar";
 import { getPlayers } from "@/lib/admin/queries";
 
+import { loadPlayerLogins } from "./actions";
 import { PlayersList } from "./PlayersList";
 import { PlayerEditor } from "./PlayerEditor";
 
@@ -12,9 +13,13 @@ export default async function PlayersPage({
   searchParams: Promise<{ edit?: string; new?: string }>;
 }) {
   const { edit, new: newPlayer } = await searchParams;
-  const players = await getPlayers();
+  const [players, logins] = await Promise.all([
+    getPlayers(),
+    loadPlayerLogins(),
+  ]);
   const editing = edit ? players.find((p) => p.id === edit) ?? null : null;
   const isCreating = newPlayer !== undefined;
+  const loginsByPlayerId = Object.fromEntries(logins);
 
   return (
     <>
@@ -36,7 +41,10 @@ export default async function PlayersPage({
         {editing || isCreating ? (
           <PlayerEditor player={editing} />
         ) : (
-          <PlayersList players={players} />
+          <PlayersList
+            players={players}
+            loginsByPlayerId={loginsByPlayerId}
+          />
         )}
       </main>
     </>

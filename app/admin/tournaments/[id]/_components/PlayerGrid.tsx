@@ -10,6 +10,7 @@ import {
 import { formatChips } from "@/lib/admin/format";
 import type { LatestSnapshot } from "@/lib/admin/chip-snapshots";
 
+import { ChipEditButton } from "./ChipEditButton";
 import { ManualColorUpButton } from "./ManualColorUpButton";
 
 type Row = {
@@ -32,6 +33,13 @@ export function PlayerGrid({
   currentLevel,
   buybackConfig,
   rows,
+  /**
+   * "admin" (default): full control, including Rebuy / Add-on (which
+   * are financial actions the head admin runs).
+   * "table": Out / Chips / Color-up only — hides Rebuy and Add-on
+   * since a table admin doesn't take buyback money.
+   */
+  scope = "admin",
 }: {
   currentLevel: number;
   buybackConfig: {
@@ -39,15 +47,18 @@ export function PlayerGrid({
     addOnAtBreakLevel?: number;
   };
   rows: Row[];
+  scope?: "admin" | "table";
 }) {
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [, start] = useTransition();
 
   const rebuyOpen =
-    buybackConfig.rebuyAllowedThroughLevel == null ||
-    currentLevel <= buybackConfig.rebuyAllowedThroughLevel;
+    scope === "admin" &&
+    (buybackConfig.rebuyAllowedThroughLevel == null ||
+      currentLevel <= buybackConfig.rebuyAllowedThroughLevel);
   const addOnOpen =
+    scope === "admin" &&
     buybackConfig.addOnAtBreakLevel != null &&
     currentLevel === buybackConfig.addOnAtBreakLevel;
 
@@ -171,6 +182,13 @@ export function PlayerGrid({
                         setPendingId(null);
                       });
                     }}
+                  />
+                ) : null}
+                {!r.busted ? (
+                  <ChipEditButton
+                    tournamentPlayerId={r.id}
+                    playerName={r.name}
+                    currentChips={r.chips}
                   />
                 ) : null}
                 {!r.busted ? (

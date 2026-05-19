@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 
 import { requireAdmin } from "@/lib/auth";
+import { requireManagePlayerSlot } from "@/lib/auth/table-admin";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { blindLevels } from "@/lib/admin/queries";
@@ -26,6 +27,10 @@ async function refresh(tournamentId: string) {
   // bust / rebuy / addon / level changes show up immediately on the TV
   // instead of waiting for the 5s drift-sync poll.
   revalidatePath("/tv");
+  // Table-admin scoped pages (`/table/[id]/[n]`) read the same roster
+  // data; revalidate the whole subtree so an action taken on /admin or
+  // on /table propagates either way.
+  revalidatePath(`/table/${tournamentId}`, "layout");
 }
 
 export async function pauseTournament(tournamentId: string) {
@@ -180,19 +185,22 @@ export async function bustPlayer(input: {
   tournamentPlayerId: string;
 }): Promise<AdminActionResult> {
   return runAdminAction(async () => {
-    await requireAdmin();
     const { tournamentPlayerId } = BustSchema.parse(input);
-    const supabase = await createClient();
-
-    const { data: tp } = await supabase
-      .from("tournament_players")
-      .select(
-        "tournament_id, player_id, busted_at_time, table_number, seat_number",
-      )
-      .eq("id", tournamentPlayerId)
-      .maybeSingle();
-    if (!tp) throw new Error("Player slot not found");
-    if (tp.busted_at_time) return;
+    // Gate: either the global admin, or the table admin (seated
+    // player) for the table this slot is on. Throws on rejection.
+    const slot = await requireManagePlayerSlot(tournamentPlayerId);
+    if (slot.busted_at_time) return;
+    // Use the service client so non-admin table admins can write —
+    // tournament_players RLS is admin-only, and the JS-level gate
+    // above is what we trust.
+    const supabase = createServiceClient();
+    const tp = {
+      tournament_id: slot.tournament_id,
+      player_id: slot.player_id,
+      busted_at_time: slot.busted_at_time,
+      table_number: slot.table_number,
+      seat_number: slot.seat_number,
+    };
 
     const { data: t } = await supabase
       .from("tournaments")
@@ -564,9 +572,13 @@ export async function decideColorUp(input: {
   requestId: string;
   decision: "approved" | "denied";
 }) {
-  await requireAdmin();
   const { requestId, decision } = ColorUpDecisionSchema.parse(input);
-  const supabase = await createClient();
+  // Look up the request first so we can resolve the player's
+  // tournament_player slot, then gate via requireManagePlayerSlot.
+  // Service client both for the lookup (cross-table read) and the
+  // subsequent writes so a non-admin table admin can decide a
+  // color-up for someone at their own table.
+  const supabase = createServiceClient();
 
   const { data: req } = await supabase
     .from("color_up_requests")
@@ -574,6 +586,17 @@ export async function decideColorUp(input: {
     .eq("id", requestId)
     .maybeSingle();
   if (!req) throw new Error("Request not found");
+
+  // Resolve the slot for this (tournament, player) so the gate
+  // can verify the caller is at the right table.
+  const { data: slotRow } = await supabase
+    .from("tournament_players")
+    .select("id")
+    .eq("tournament_id", req.tournament_id)
+    .eq("player_id", req.player_id)
+    .maybeSingle();
+  if (!slotRow) throw new Error("Player slot not found");
+  await requireManagePlayerSlot(slotRow.id);
 
   // Pull the rounding delta out of the player's submission. The player
   // page stores the exchange as { total, chips, net_change }, where
@@ -665,25 +688,24 @@ export async function applyManualColorUp(input: {
   receivedTotal: number;
 }): Promise<AdminActionResult> {
   return runAdminAction(async () => {
-    await requireAdmin();
     const { tournamentPlayerId, submittedTotal, receivedTotal } =
       ManualColorUpSchema.parse(input);
-    const supabase = await createClient();
-
-    const { data: tp } = await supabase
-      .from("tournament_players")
-      .select(
-        "id, tournament_id, player_id, current_chips, busted_at_time",
-      )
-      .eq("id", tournamentPlayerId)
-      .maybeSingle();
-    if (!tp) throw new Error("Player slot not found");
-    if (tp.busted_at_time) {
+    // Gate: admin OR table admin for this player's table.
+    const slot = await requireManagePlayerSlot(tournamentPlayerId);
+    if (slot.busted_at_time) {
       throw new Error("Can't color-up a busted player.");
     }
-    if (!tp.player_id) {
+    if (!slot.player_id) {
       throw new Error("Player slot has no linked player.");
     }
+    const supabase = await createClient();
+    const tp = {
+      id: tournamentPlayerId,
+      tournament_id: slot.tournament_id,
+      player_id: slot.player_id,
+      current_chips: slot.current_chips,
+      busted_at_time: slot.busted_at_time,
+    };
 
     const { data: t } = await supabase
       .from("tournaments")
@@ -763,7 +785,9 @@ const FinalizeOptionsSchema = z
   })
   .optional();
 
-type SupabaseAny = Awaited<ReturnType<typeof createClient>>;
+type SupabaseAny =
+  | Awaited<ReturnType<typeof createClient>>
+  | ReturnType<typeof createServiceClient>;
 
 /**
  * Core finalize logic, factored out so both the manual finalize action and
@@ -1560,5 +1584,95 @@ export async function removePlayerFromTournament(input: {
     if (delErr) throw new Error(delErr.message);
 
     await refresh(tournamentId);
+  });
+}
+
+// ─── Chip-count edits ───────────────────────────────────────────────────
+
+const AdjustChipsSchema = z.object({
+  tournamentPlayerId: z.uuid(),
+  // 10M is a generous cap — way above any realistic stack — but
+  // small enough to catch a "typed an extra zero" mistake.
+  newChips: z.coerce.number().int().min(0).max(10_000_000),
+  reason: z
+    .string()
+    .trim()
+    .max(140)
+    .optional()
+    .or(z.literal(""))
+    .transform((v) => (v ? v : null)),
+});
+
+/**
+ * Set a tournament player's `current_chips` to a new total. Used by
+ * the head admin to correct leaderboards before a table merge (when
+ * relying on each player's QR self-report isn't reliable) and by
+ * table admins to keep their own table's counts honest mid-tournament.
+ *
+ * Appends a `chip_adjust` event for audit:
+ *   { tournament_player_id, player_id, at_level,
+ *     table_number, seat_number,
+ *     before, after, delta,
+ *     actor: 'admin' | 'table_admin', reason? }
+ *
+ * Rejects on busted players (they're at 0 by definition; use rebuy
+ * if you want them back in) and on negative deltas that would
+ * push the stack below zero.
+ */
+export async function adjustChips(input: {
+  tournamentPlayerId: string;
+  newChips: number;
+  reason?: string | null;
+}): Promise<AdminActionResult> {
+  return runAdminAction(async () => {
+    const parsed = AdjustChipsSchema.parse(input);
+    const slot = await requireManagePlayerSlot(parsed.tournamentPlayerId);
+    if (slot.busted_at_time) {
+      throw new Error(
+        "Player is busted — use Rebuy to bring them back in, not chip edit.",
+      );
+    }
+
+    const supabase = createServiceClient();
+    const { data: t } = await supabase
+      .from("tournaments")
+      .select("current_level, status")
+      .eq("id", slot.tournament_id)
+      .maybeSingle();
+    if (!t) throw new Error("Tournament not found.");
+    if (t.status === "finished" || t.status === "cancelled") {
+      throw new Error(
+        `Chip edits are only allowed while the tournament is active (currently ${t.status}).`,
+      );
+    }
+
+    const before = slot.current_chips;
+    const after = parsed.newChips;
+    if (after === before) return; // no-op
+
+    const { error: upErr } = await supabase
+      .from("tournament_players")
+      .update({ current_chips: after })
+      .eq("id", parsed.tournamentPlayerId);
+    if (upErr) throw new Error(upErr.message);
+
+    await supabase.from("tournament_events").insert({
+      tournament_id: slot.tournament_id,
+      type: "chip_adjust",
+      payload: {
+        tournament_player_id: parsed.tournamentPlayerId,
+        player_id: slot.player_id,
+        at_level: t.current_level,
+        table_number: slot.table_number,
+        seat_number: slot.seat_number,
+        before,
+        after,
+        delta: after - before,
+        actor: slot.actor,
+        reason: parsed.reason,
+      },
+    });
+
+    await refresh(slot.tournament_id);
   });
 }
