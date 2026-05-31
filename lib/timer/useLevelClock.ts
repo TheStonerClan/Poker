@@ -2,6 +2,17 @@
 
 import { useSyncExternalStore } from "react";
 
+import { computeElapsedMs } from "./elapsed";
+import type { ClockInputs } from "./elapsed";
+
+// Re-exported so existing client consumers can keep importing these from
+// `useLevelClock`. The implementation lives in the server-safe `./elapsed`
+// module — the auto-advance API route needs to call `computeElapsedMs` on
+// the server, which is impossible when it's exported from a "use client"
+// module (the import becomes an uncallable client-reference stub).
+export { computeElapsedMs };
+export type { ClockInputs };
+
 export type ClockState = {
   remainingSec: number;
   elapsedSec: number;
@@ -9,34 +20,6 @@ export type ClockState = {
   isPaused: boolean;
   isRunning: boolean;
 };
-
-export type ClockInputs = {
-  status: string;
-  durationSec: number;
-  levelStartedAt: string | null;
-  levelPausedAt: string | null;
-  accumulatedPauseMs: number;
-};
-
-/**
- * Compute the elapsed milliseconds within the current level, given the
- * server's authoritative timestamps. The clock is "frozen" while paused
- * and resumes from where it left off — accumulated pause time is stored
- * server-side in `accumulated_pause_ms`.
- */
-export function computeElapsedMs(inputs: ClockInputs, nowMs: number): number {
-  if (!inputs.levelStartedAt) return 0;
-  const start = Date.parse(inputs.levelStartedAt);
-  if (Number.isNaN(start)) return 0;
-
-  const referenceMs =
-    inputs.status === "paused" && inputs.levelPausedAt
-      ? Date.parse(inputs.levelPausedAt)
-      : nowMs;
-
-  const elapsed = referenceMs - start - (inputs.accumulatedPauseMs ?? 0);
-  return Math.max(0, elapsed);
-}
 
 // External clock store: a single 250ms heartbeat shared by every consumer.
 let nowMs = 0;
