@@ -111,7 +111,21 @@ export function deriveHandState(input: {
     const st = streetState.get(a.seat_number);
     if (!st) continue;
     if (a.street === street) {
-      st.contributed_this_street += a.amount;
+      // Antes are forced posts settled BEFORE betting opens — they go
+      // into the pot (via hand_seats.total_contributed) but must NOT
+      // inflate the per-street running bet. Without this filter, the
+      // BB shows BB+ante on preflop, that becomes the current_bet,
+      // and everyone else is told they owe (BB+ante − their ante) to
+      // call — which is BB extra, instead of BB. (e.g. Level 1 1/2
+      // with $2 ante was showing BB=$4, everyone "in at $2" with
+      // "call $2 to bring it up to $4" — the canonical case the
+      // user reported.)
+      //
+      // SB and BB ARE part of the betting round, so post_sb /
+      // post_bb still count toward contributed_this_street.
+      if (a.action !== "post_ante") {
+        st.contributed_this_street += a.amount;
+      }
       if (
         a.action === "check" ||
         a.action === "call" ||
