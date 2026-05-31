@@ -77,19 +77,32 @@ export default async function TournamentsListPage() {
           ) : (
             <ul className="flex flex-col gap-2">
               {finished.map((t) => (
-                <li
-                  key={t.id}
-                  className="rounded-md border border-fg/10 px-3 py-2 text-sm"
-                >
-                  <p className="font-medium text-fg">
-                    {t.finished_at
-                      ? new Date(t.finished_at).toLocaleDateString()
-                      : "—"}
-                  </p>
-                  <p className="text-xs text-fg/50">
-                    {t.status} · level {t.current_level} · buy-in{" "}
-                    {formatMoney(t.buy_in_snapshot)}
-                  </p>
+                <li key={t.id}>
+                  {/*
+                    Wrap each row in a Link to /admin/tournaments/[id]
+                    so the admin can drill in to the Danger zone
+                    delete (or just view the finalized recap).
+                    Previously these rendered as plain text with no
+                    affordance, leaving the admin no path to delete a
+                    test tournament from the UI.
+                  */}
+                  <Link
+                    href={`/admin/tournaments/${t.id}`}
+                    className="flex items-center gap-2 rounded-md border border-fg/10 px-3 py-2 text-sm transition hover:border-fg/25 hover:bg-fg/[0.02]"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="font-medium text-fg">
+                        {t.finished_at
+                          ? new Date(t.finished_at).toLocaleDateString()
+                          : "—"}
+                      </p>
+                      <p className="text-xs text-fg/50">
+                        {t.status} · level {t.current_level} · buy-in{" "}
+                        {formatMoney(t.buy_in_snapshot)}
+                      </p>
+                    </div>
+                    <span className="text-fg/40">›</span>
+                  </Link>
                 </li>
               ))}
             </ul>

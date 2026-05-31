@@ -54,7 +54,7 @@ export default async function HistoryPage({
   const { data: tournamentsData } = await supabase
     .from("tournaments")
     .select(
-      "id, template_id, status, finished_at, started_at, buy_in_snapshot, current_level, rebuy_price_snapshot, buyback_config_snapshot",
+      "id, template_id, status, finished_at, started_at, buy_in_snapshot, current_level, rebuy_price_snapshot, buyback_config_snapshot, blind_structure_snapshot",
     )
     .eq("status", "finished")
     .order("finished_at", { ascending: false })
@@ -139,6 +139,41 @@ export default async function HistoryPage({
 
   const leaderboard = buildLeaderboard({ roster, payouts });
   const histogram = buildBustHistogram(bustEvents);
+  // Build a level_num → "small/big" label map from the most recent
+  // tournament's blind structure so the histogram x-axis reads as
+  // poker blinds ("1/2", "2/4") instead of opaque level numbers
+  // ("L1", "L2"). Tournaments within the same league use the same
+  // structure in practice; if a histogram bucket falls outside the
+  // structure (older tournament with extra levels), the render
+  // falls back to "L{num}" so nothing breaks.
+  type FinishedTournamentWithBlinds = (typeof allTournaments)[number] & {
+    blind_structure_snapshot?: unknown;
+  };
+  const recentTournament = (allTournaments[0] ?? null) as
+    | FinishedTournamentWithBlinds
+    | null;
+  const histogramLabels = new Map<number, string>();
+  if (recentTournament?.blind_structure_snapshot) {
+    const levels = Array.isArray(recentTournament.blind_structure_snapshot)
+      ? (recentTournament.blind_structure_snapshot as Array<{
+          level_num?: number;
+          small?: number;
+          big?: number;
+          is_break?: boolean;
+        }>)
+      : [];
+    for (const lvl of levels) {
+      if (typeof lvl.level_num !== "number") continue;
+      if (lvl.is_break) {
+        histogramLabels.set(lvl.level_num, "Break");
+      } else if (
+        typeof lvl.small === "number" &&
+        typeof lvl.big === "number"
+      ) {
+        histogramLabels.set(lvl.level_num, `${lvl.small}/${lvl.big}`);
+      }
+    }
+  }
   const summaries = buildTournamentSummaries({ tournaments, roster, payouts });
   const playerStats = buildPlayerStats({
     tournaments,
@@ -357,7 +392,11 @@ export default async function HistoryPage({
         </h2>
         <HistogramBars
           buckets={histogram.map((b) => ({
-            label: `L${b.levelNum}`,
+            // Prefer the blind label ("1/2", "2/4") from the most
+            // recent tournament's structure. Fall back to "L{num}"
+            // if the level isn't in the structure (older tournament
+            // with a longer ladder).
+            label: histogramLabels.get(b.levelNum) ?? `L${b.levelNum}`,
             count: b.count,
           }))}
           yLabel="busts"
