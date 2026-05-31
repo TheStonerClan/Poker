@@ -120,6 +120,14 @@ export default async function TableAdminPage({
   const inPlay = atTable.filter((r) => !r.busted_at_time);
   const out = atTable.filter((r) => r.busted_at_time);
 
+  // Seating banner: trips when any active player at the table has
+  // a null seat_confirmed_at (first sign-in OR after a system reseat
+  // from balance / merge / move). The link routes to the editor; the
+  // banner clears as soon as the table admin saves.
+  const seatsNeedConfirmation = inPlay.some(
+    (r) => r.seat_confirmed_at == null,
+  );
+
   // Color-up inbox: only requests from players currently seated at
   // this table. Look up player_id → table_number via the roster
   // we already fetched.
@@ -186,6 +194,26 @@ export default async function TableAdminPage({
           </p>
         </section>
 
+        {seatsNeedConfirmation ? (
+          <section className="flex items-center gap-3 rounded-lg border border-gold bg-gold/10 p-3">
+            <div className="min-w-0 flex-1">
+              <p className="text-label text-[11px] font-semibold uppercase tracking-[0.25em] text-gold">
+                Seats need confirmation
+              </p>
+              <p className="mt-0.5 text-xs text-fg/70">
+                The system assigned seats — please confirm who is
+                physically sitting where before you start a hand.
+              </p>
+            </div>
+            <Link
+              href={`/table/${tournamentId}/${tableNumber}/seats`}
+              className="inline-flex h-11 min-h-[44px] items-center justify-center rounded-md bg-gold px-4 text-xs font-semibold uppercase tracking-wider text-bg"
+            >
+              Confirm
+            </Link>
+          </section>
+        ) : null}
+
         <section className="flex items-center gap-3 rounded-lg border border-fg/15 p-3">
           <div className="min-w-0 flex-1">
             <p className="text-label text-[11px] font-semibold uppercase tracking-[0.25em]">
@@ -202,6 +230,23 @@ export default async function TableAdminPage({
             className="inline-flex h-11 min-h-[44px] items-center justify-center rounded-md bg-gold px-4 text-xs font-semibold uppercase tracking-wider text-bg"
           >
             {activeHand ? "Resume" : "Start hand"}
+          </Link>
+        </section>
+
+        <section className="flex items-center gap-3 rounded-lg border border-fg/10 p-3">
+          <div className="min-w-0 flex-1">
+            <p className="text-label text-[11px] font-semibold uppercase tracking-[0.25em]">
+              Seating
+            </p>
+            <p className="mt-0.5 text-xs text-fg/55">
+              Rearrange physical seats any time.
+            </p>
+          </div>
+          <Link
+            href={`/table/${tournamentId}/${tableNumber}/seats`}
+            className="inline-flex h-11 min-h-[44px] items-center justify-center rounded-md border border-fg/15 px-4 text-xs font-semibold uppercase tracking-wider text-fg/80"
+          >
+            Edit seats
           </Link>
         </section>
 

@@ -1185,12 +1185,18 @@ export async function randomizeTableAssignments(
     // RPC. The `player_id` field on each assignment is actually the
     // tournament_player row id we shuffled in (the helper is id-agnostic),
     // so we can update by it directly.
+    //
+    // Setting seat_confirmed_at = null trips the "needs confirmation"
+    // banner the next time the table admin loads /table/[id]/[n] —
+    // the system-assigned seats are a STARTING point, not the final
+    // physical layout.
     for (const a of assignments) {
       const { error } = await supabase
         .from("tournament_players")
         .update({
           table_number: a.table_number,
           seat_number: a.seat_number,
+          seat_confirmed_at: null,
         })
         .eq("id", a.player_id);
       if (error) throw new Error(error.message);
@@ -1267,15 +1273,45 @@ export async function balanceTables(
     // (it tracks the occupied set as it generates moves, ignoring busted
     // players). So a sequence of single-row updates can't violate the
     // partial unique index.
+    //
+    // We also clear seat_confirmed_at for both the movers AND the
+    // stayers at every table the balance touched — the layout changed
+    // even at the source table (a player left), so the table admin
+    // should reconfirm there too. The simplest correct policy: any
+    // active player at any table involved in moves gets reconfirmed.
+    const touchedTables = new Set<number>();
+    for (const m of moves) {
+      touchedTables.add(m.table_number);
+    }
+    for (const row of rows ?? []) {
+      if (row.busted_at_time != null) continue;
+      if (row.table_number != null && touchedTables.has(row.table_number)) {
+        // No-op; will be picked up by the destination table's
+        // confirm pass too. Including the source table is what
+        // matters.
+      }
+    }
     for (const m of moves) {
       const { error } = await supabase
         .from("tournament_players")
         .update({
           table_number: m.table_number,
           seat_number: m.seat_number,
+          seat_confirmed_at: null,
         })
         .eq("id", m.id);
       if (error) throw new Error(error.message);
+    }
+    // Clear confirmation on stayers at any table that lost or gained
+    // a mover. Done as a batched update keyed on table_number.
+    if (touchedTables.size > 0) {
+      const { error: stayerErr } = await supabase
+        .from("tournament_players")
+        .update({ seat_confirmed_at: null })
+        .eq("tournament_id", id)
+        .is("busted_at_time", null)
+        .in("table_number", Array.from(touchedTables));
+      if (stayerErr) throw new Error(stayerErr.message);
     }
 
     await refresh(id);
@@ -1366,10 +1402,20 @@ export async function mergeTables(
         .update({
           table_number: m.table_number,
           seat_number: m.seat_number,
+          seat_confirmed_at: null,
         })
         .eq("id", m.id);
       if (error) throw new Error(error.message);
     }
+    // Stayers (active players already at the merge target) also need
+    // reconfirmation — they're now sharing the table with newcomers.
+    const { error: stayerErr } = await supabase
+      .from("tournament_players")
+      .update({ seat_confirmed_at: null })
+      .eq("tournament_id", id)
+      .eq("table_number", plan.targetTable)
+      .is("busted_at_time", null);
+    if (stayerErr) throw new Error(stayerErr.message);
 
     await supabase.from("tournament_events").insert({
       tournament_id: id,

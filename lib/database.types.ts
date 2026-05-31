@@ -494,6 +494,7 @@ export type Database = {
           payout_amount: number | null
           player_id: string
           rebuys_used: number
+          seat_confirmed_at: string | null
           seat_number: number | null
           table_number: number | null
           tournament_id: string
@@ -516,6 +517,7 @@ export type Database = {
           payout_amount?: number | null
           player_id: string
           rebuys_used?: number
+          seat_confirmed_at?: string | null
           seat_number?: number | null
           table_number?: number | null
           tournament_id: string
@@ -538,6 +540,7 @@ export type Database = {
           payout_amount?: number | null
           player_id?: string
           rebuys_used?: number
+          seat_confirmed_at?: string | null
           seat_number?: number | null
           table_number?: number | null
           tournament_id?: string

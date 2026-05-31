@@ -1027,14 +1027,29 @@ export async function movePlayerToTable(input: {
       throw new Error("No free seat at the destination table.");
     }
 
+    // The moved player lands at a system-picked seat; they need the
+    // table admin to confirm physical placement. The destination
+    // table's stayers also need reconfirmation since they're sharing
+    // the table with a newcomer. The source table's stayers don't
+    // physically rearrange — they just lose a chair — so we leave
+    // their confirmation intact.
     const { error: upErr } = await supabase
       .from("tournament_players")
       .update({
         table_number: parsed.toTableNumber,
         seat_number: seat,
+        seat_confirmed_at: null,
       })
       .eq("id", parsed.tournamentPlayerId);
     if (upErr) throw new Error(upErr.message);
+
+    const { error: destStayerErr } = await supabase
+      .from("tournament_players")
+      .update({ seat_confirmed_at: null })
+      .eq("tournament_id", tp.tournament_id)
+      .eq("table_number", parsed.toTableNumber)
+      .is("busted_at_time", null);
+    if (destStayerErr) throw new Error(destStayerErr.message);
 
     await supabase.from("tournament_events").insert({
       tournament_id: tp.tournament_id,
