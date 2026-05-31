@@ -63,6 +63,7 @@ export default async function LiveTournamentPage({
     pendingColorUps,
     colorUpGains,
     snapshotEventsRes,
+    activeHandsRes,
     allPlayers,
   ] = await Promise.all([
     getTournamentRoster(tournament.id),
@@ -81,8 +82,42 @@ export default async function LiveTournamentPage({
       .eq("tournament_id", tournament.id)
       .eq("type", "chip_snapshot")
       .order("created_at", { ascending: true }),
+    // Active hand per table, so the per-table cards below can show
+    // "Hand #N in progress" badges and the admin can jump straight
+    // into the live tracker for any table.
+    supabase
+      .from("hands")
+      .select("table_number, hand_number, current_street")
+      .eq("tournament_id", tournament.id)
+      .eq("status", "active"),
     isScheduled ? getPlayers() : Promise.resolve([]),
   ]);
+  const activeHandByTable = new Map<
+    number,
+    { hand_number: number; current_street: string }
+  >();
+  for (const h of activeHandsRes.data ?? []) {
+    if (h.table_number != null) {
+      activeHandByTable.set(h.table_number, {
+        hand_number: h.hand_number,
+        current_street: h.current_street,
+      });
+    }
+  }
+  // Per-table unconfirmed-seat counts so the per-table cards can show
+  // an amber dot when any active player at that table still has a
+  // null seat_confirmed_at.
+  const unconfirmedSeatsByTable = new Map<number, number>();
+  for (const r of roster) {
+    if (r.busted_at_time != null) continue;
+    if (r.table_number == null) continue;
+    if (r.seat_confirmed_at == null) {
+      unconfirmedSeatsByTable.set(
+        r.table_number,
+        (unconfirmedSeatsByTable.get(r.table_number) ?? 0) + 1,
+      );
+    }
+  }
   const colorUpDelta = colorUpGains.reduce((s, g) => s + g.net_change, 0);
   const snapshotEvents = (snapshotEventsRes.data ?? []) as ChipSnapshotEvent[];
   const latestSnapshotByPlayer = latestChipSnapshotPerPlayer(snapshotEvents);
@@ -162,6 +197,79 @@ export default async function LiveTournamentPage({
         </section>
 
         <LevelControls tournament={tournament} />
+
+        {/*
+            Per-table navigation cards. Lets the head admin open the
+            scoped /table/[tid]/[n] view for any table — same surface
+            the table admin uses (hand tracker, seat editor, color-up
+            inbox, per-table chip edits). Without these links the
+            admin had no way to reach those features from the global
+            tournament page short of typing the URL by hand.
+          */}
+        {(tournament.status === "running" || tournament.status === "paused") &&
+        tournament.num_tables ? (
+          <section className="rounded-lg border border-fg/15 p-4">
+            <h2 className="text-label mb-3 text-[11px] font-semibold uppercase tracking-[0.25em]">
+              Tables
+            </h2>
+            <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {resolveTablesConfig({
+                tablesConfig: tournament.tables_config,
+                numTables: tournament.num_tables,
+                maxSeatsPerTable: tournament.max_seats_per_table,
+              }).map((cfg, i) => {
+                const tableNumber = i + 1;
+                const tableCss = TABLE_COLOR_CSS[cfg.color];
+                const tableActive = roster.filter(
+                  (r) =>
+                    r.table_number === tableNumber && !r.busted_at_time,
+                ).length;
+                const liveHand = activeHandByTable.get(tableNumber);
+                const unconfirmed =
+                  unconfirmedSeatsByTable.get(tableNumber) ?? 0;
+                return (
+                  <li key={tableNumber}>
+                    <Link
+                      href={`/table/${tournament.id}/${tableNumber}`}
+                      className="flex items-center gap-3 rounded-md border-2 p-3 transition hover:bg-fg/[0.02]"
+                      style={{
+                        borderColor: tableCss.border,
+                        background: tableCss.bg,
+                      }}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <p
+                          className="text-[11px] font-semibold uppercase tracking-widest"
+                          style={{ color: tableCss.text }}
+                        >
+                          {cfg.name ?? `Table ${tableNumber}`}
+                        </p>
+                        <p className="mt-0.5 text-xs text-fg/60">
+                          {tableActive} in play · {cfg.max_seats} seats
+                        </p>
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {liveHand ? (
+                            <span className="rounded bg-gold/20 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-gold">
+                              Hand #{liveHand.hand_number} ·{" "}
+                              {liveHand.current_street}
+                            </span>
+                          ) : null}
+                          {unconfirmed > 0 ? (
+                            <span className="rounded bg-gold/20 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-gold">
+                              {unconfirmed} seat
+                              {unconfirmed === 1 ? "" : "s"} unconfirmed
+                            </span>
+                          ) : null}
+                        </div>
+                      </div>
+                      <span className="text-fg/40">›</span>
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        ) : null}
 
         {(tournament.status === "running" || tournament.status === "paused") &&
         tournament.num_tables &&
