@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { createServiceClient } from "@/lib/supabase/service";
-import { computeElapsedMs } from "@/lib/timer/useLevelClock";
+import { computeElapsedMs } from "@/lib/timer/elapsed";
 import { getLevel, parseLevels } from "@/lib/tv/levels";
 
 /**
