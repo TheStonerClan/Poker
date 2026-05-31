@@ -152,6 +152,9 @@ export default async function HistoryPage({
   const recentTournament = (allTournaments[0] ?? null) as
     | FinishedTournamentWithBlinds
     | null;
+  // Also expose this as a plain Record so client components (e.g.
+  // PerPlayerStatsTable) can receive it as a serializable prop and
+  // render their level-derived columns with blind labels too.
   const histogramLabels = new Map<number, string>();
   if (recentTournament?.blind_structure_snapshot) {
     const levels = Array.isArray(recentTournament.blind_structure_snapshot)
@@ -174,6 +177,9 @@ export default async function HistoryPage({
       }
     }
   }
+  const levelLabelRecord: Record<number, string> = Object.fromEntries(
+    histogramLabels,
+  );
   const summaries = buildTournamentSummaries({ tournaments, roster, payouts });
   const playerStats = buildPlayerStats({
     tournaments,
@@ -307,7 +313,10 @@ export default async function HistoryPage({
             Tap a header to re-sort
           </span>
         </div>
-        <PerPlayerStatsTable rows={playerStats} />
+        <PerPlayerStatsTable
+          rows={playerStats}
+          levelLabels={levelLabelRecord}
+        />
       </section>
 
       {/* Rebuy + addon cohorts — three short ranked lists. */}
