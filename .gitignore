@@ -44,3 +44,6 @@ supabase/.temp/
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# signal-cli linked-device state (encryption keys; per-machine; never commit)
+/scripts/signal-cli/signal-data/

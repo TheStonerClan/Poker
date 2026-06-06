@@ -339,4 +339,93 @@ docker compose pull && docker compose up -d --build
 | `proxy/`              | Node.js HMAC proxy image source.                       |
 | `send.ts`             | Server-side helper for the Next.js app to import.      |
 | `test-send.ts`        | CLI smoke test that calls `sendToGroup`.               |
+| `send-week-out.ts`    | Manual sender for the 1-week-out reminder (fixture or live data). |
+| `send-recap.ts`       | Manual sender for the recap (fixture, latest, or specific tournament). |
+| `messages/`           | Pure formatters + Supabase loader for the message types. |
 | `signal-data/`        | Persistent signal-cli state (created on first run).    |
+
+## 11. Automated dispatch (Next.js integration)
+
+The recurring 1-week-out reminder and post-game recap are wired into the
+Next.js app so they fire without any human action:
+
+| Trigger | Path | Idempotency key |
+| --- | --- | --- |
+| Daily 14:00 UTC Vercel Cron | `app/api/cron/week-out-reminder/route.ts` | `week-out:<template_id>:<YYYY-MM-DD>` |
+| Tournament finalize (admin click or auto-finalize on last bust) | `performFinalize()` in `app/admin/tournaments/[id]/actions.ts` | `recap:<tournament_id>` |
+| Admin manual test / force re-fire | `POST /api/admin/signal/test` | same as the natural triggers |
+
+Every dispatch lands a row in the `signal_dispatches` ledger
+(migration `0010_signal_dispatches.sql`). A second dispatch with the same
+key short-circuits via the unique constraint — so a cron retry, a
+duplicate admin click, or a finalize-undo-finalize all produce exactly
+one message on Signal.
+
+### Required Vercel env vars
+
+| Var | Where | Value |
+| --- | --- | --- |
+| `SIGNAL_BRIDGE_URL` | Production + Preview | `https://signal.holdemclock.com` |
+| `SIGNAL_BRIDGE_SECRET` | Production + Preview | hex string matching the Mac Mini `.env` |
+| `SIGNAL_FROM_NUMBER` | Production + Preview | `+15551234567` (Travis's number) |
+| `CF_ACCESS_CLIENT_ID` | Production + Preview | from the Cloudflare service token |
+| `CF_ACCESS_CLIENT_SECRET` | Production + Preview | from the Cloudflare service token |
+| `SIGNAL_TOURNAMENT_GROUP_ID` | **Production only** | `group.<base64>` of the real tournament group |
+| `SIGNAL_SANDBOX_GROUP_ID` | **Preview + Development** | `group.<base64>` of the sandbox group |
+| `CRON_SECRET` | Production | random opaque string; Vercel adds `Authorization: Bearer <CRON_SECRET>` when firing cron jobs |
+| `NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | already set for the rest of the app | needed by the dispatcher to read templates / record dispatches |
+
+The env-aware split between `SIGNAL_TOURNAMENT_GROUP_ID` (prod only) and
+`SIGNAL_SANDBOX_GROUP_ID` (preview/dev only) is the gate that keeps test
+deploys physically incapable of messaging the real tournament group —
+`lib/signal/group.ts` reads only the var that matches the current
+`VERCEL_ENV`.
+
+### Migration
+
+`supabase/migrations/0010_signal_dispatches.sql` adds the ledger table.
+Apply via your usual flow (`supabase db push` or whatever the project uses)
+before the cron / finalize hook runs in production. After the migration
+lands, regenerate types and delete `lib/signal/db-augment.ts` + the
+targeted casts in `lib/signal/dispatch.ts`:
+
+```sh
+supabase gen types typescript --linked > lib/database.types.ts
+rm lib/signal/db-augment.ts
+# edit dispatch.ts to drop the AnyTableBuilder cast + Insert/Update types
+```
+
+### Admin test endpoint
+
+```sh
+# Preview (no send, no ledger row)
+curl -X POST https://holdemclock.com/api/admin/signal/test \
+  -H 'content-type: application/json' \
+  -d '{"kind":"week-out","templateId":"f53ceb45-85cf-4254-a95e-c28c59fb1d6d","dryRun":true}'
+
+# Force-fire week-out for a template now (subject to idempotency)
+curl -X POST https://holdemclock.com/api/admin/signal/test \
+  -H 'content-type: application/json' \
+  -d '{"kind":"week-out","templateId":"f53ceb45-..."}'
+
+# Re-send recap for a specific tournament
+curl -X POST https://holdemclock.com/api/admin/signal/test \
+  -H 'content-type: application/json' \
+  -d '{"kind":"recap","tournamentId":"b85d9744-..."}'
+```
+
+Endpoint is gated by `requireAdmin()` — you must be signed in as an admin
+in the same browser session for the call to work. From a terminal,
+authenticate via the admin UI first then copy the session cookie into the
+curl, or hit it from the browser devtools console while logged in.
+
+### Cron auth from curl (for force-firing the cron route)
+
+```sh
+curl -X POST https://holdemclock.com/api/cron/week-out-reminder \
+  -H "Authorization: Bearer ${CRON_SECRET}"
+```
+
+Returns a JSON summary: `{ ranAt, considered, fired: [...], skipped: [...] }`.
+The `dispatch.status` of each fired entry tells you `sent` / `failed` /
+`skipped: already-dispatched`.
