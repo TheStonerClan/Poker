@@ -15,6 +15,9 @@ import {
   randomizeAssignments,
   resolveTablesConfig,
 } from "@/lib/admin/tables";
+import { dispatchMessage } from "@/lib/signal/dispatch";
+import { buildRecapMessage } from "@/scripts/signal-cli/messages/recap";
+import { loadRecapForTournament } from "@/scripts/signal-cli/messages/load-last-recap";
 import { computePayouts } from "prize-math";
 import type { TablesUpdate } from "@/lib/database.types";
 
@@ -991,6 +994,28 @@ async function performFinalize(
       auto: options.autoFromLastBust ?? false,
     },
   });
+
+  // Fire-and-forget the Signal recap dispatch. Wrapped in its own scope so
+  // a Signal-bridge outage cannot unwind the finalize transaction or
+  // surface as a user-visible error — the dispatcher records failures to
+  // the signal_dispatches ledger and an admin can retry via the test
+  // endpoint. Idempotency key `recap:<tournament_id>` means a re-finalize
+  // (or admin re-trigger) won't double-send.
+  try {
+    const recapInput = await loadRecapForTournament(tournamentId, {
+      client: supabase,
+    });
+    const recapBody = buildRecapMessage(recapInput);
+    await dispatchMessage({
+      kind: "recap",
+      key: `recap:${tournamentId}`,
+      body: recapBody,
+    });
+  } catch (err) {
+    // Swallow — the ledger has the failure if dispatch got far enough,
+    // and the finalize itself is irreversibly committed.
+    console.error("recap dispatch failed", err);
+  }
 }
 
 export async function finalizeTournament(
