@@ -646,12 +646,18 @@ export function buildPlayerStats(args: {
     });
   }
 
-  // Default sort: F1 points DESC, then wins, then net. Points already
-  // weight finishing position, so ties usually break naturally — wins
-  // and net are belt-and-suspenders for back-to-back podium finishers.
+  // Default sort: F1 points DESC, then average finishing position ASC
+  // (lower is better). Players with equal points — e.g. everyone who
+  // busted out of the points (finished worse than 9th) and so scored 0 —
+  // are separated by who finishes higher on average. Players with no
+  // recorded finish sort last among their points group. Wins and net
+  // remain as deeper tiebreakers for identical points + avg finish.
   // The UI can re-sort by any other column on click.
   rows.sort((a, b) => {
     if (b.points !== a.points) return b.points - a.points;
+    const aFinish = a.avgFinish ?? Number.POSITIVE_INFINITY;
+    const bFinish = b.avgFinish ?? Number.POSITIVE_INFINITY;
+    if (aFinish !== bFinish) return aFinish - bFinish;
     if (b.wins !== a.wins) return b.wins - a.wins;
     return b.net - a.net;
   });
