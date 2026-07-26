@@ -651,6 +651,9 @@ export type Database = {
           accumulated_pause_ms: number
           ante_mode_snapshot: string
           blind_structure_snapshot: Json
+          bounty_amount: number
+          bounty_collected_by_player_id: string | null
+          bounty_target_player_id: string | null
           buy_in_snapshot: number
           buyback_config_snapshot: Json
           chip_denominations_snapshot: Json
@@ -682,6 +685,9 @@ export type Database = {
           accumulated_pause_ms?: number
           ante_mode_snapshot: string
           blind_structure_snapshot: Json
+          bounty_amount?: number
+          bounty_collected_by_player_id?: string | null
+          bounty_target_player_id?: string | null
           buy_in_snapshot: number
           buyback_config_snapshot: Json
           chip_denominations_snapshot: Json
@@ -713,6 +719,9 @@ export type Database = {
           accumulated_pause_ms?: number
           ante_mode_snapshot?: string
           blind_structure_snapshot?: Json
+          bounty_amount?: number
+          bounty_collected_by_player_id?: string | null
+          bounty_target_player_id?: string | null
           buy_in_snapshot?: number
           buyback_config_snapshot?: Json
           chip_denominations_snapshot?: Json
@@ -746,6 +755,20 @@ export type Database = {
             columns: ["template_id"]
             isOneToOne: false
             referencedRelation: "tournament_templates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tournaments_bounty_target_player_id_fkey"
+            columns: ["bounty_target_player_id"]
+            isOneToOne: false
+            referencedRelation: "players"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tournaments_bounty_collected_by_player_id_fkey"
+            columns: ["bounty_collected_by_player_id"]
+            isOneToOne: false
+            referencedRelation: "players"
             referencedColumns: ["id"]
           },
         ]

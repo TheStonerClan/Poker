@@ -32,6 +32,12 @@ import {
 
 import { AutoAdvanceWatcher } from "../../_components/AutoAdvanceWatcher";
 import { LevelControls } from "../../_components/LevelControls";
+import {
+  AuditLog,
+  formatAuditDescription,
+  type AuditLogEntry,
+} from "./_components/AuditLog";
+import { BountyPanel } from "./_components/BountyPanel";
 import { PlayerGrid } from "./_components/PlayerGrid";
 import { ColorUpInbox } from "./_components/ColorUpInbox";
 import { DeleteTournamentButton } from "./_components/DeleteTournamentButton";
@@ -66,6 +72,7 @@ export default async function LiveTournamentPage({
     snapshotEventsRes,
     activeHandsRes,
     allPlayers,
+    auditEventsRes,
   ] = await Promise.all([
     getTournamentRoster(tournament.id),
     getPendingColorUpRequests(tournament.id),
@@ -92,6 +99,16 @@ export default async function LiveTournamentPage({
       .eq("tournament_id", tournament.id)
       .eq("status", "active"),
     isScheduled ? getPlayers() : Promise.resolve([]),
+    // Audit log: bust/rebuy/addon/chip_adjust for the undo UI, plus undo
+    // events themselves (not displayed, just used to mark already-undone
+    // rows). Descending so the newest mistake is at the top.
+    supabase
+      .from("tournament_events")
+      .select("id, type, payload, created_at")
+      .eq("tournament_id", tournament.id)
+      .in("type", ["bust", "rebuy", "addon", "chip_adjust", "undo"])
+      .order("created_at", { ascending: false })
+      .limit(200),
   ]);
   const activeHandByTable = new Map<
     number,
@@ -123,6 +140,42 @@ export default async function LiveTournamentPage({
   const snapshotEvents = (snapshotEventsRes.data ?? []) as ChipSnapshotEvent[];
   const latestSnapshotByPlayer = latestChipSnapshotPerPlayer(snapshotEvents);
 
+  // Audit log: undo events don't render as rows themselves, they just
+  // mark the original row as "undone" (no double-undo, and the UI hides
+  // the Undo button once an event has been reversed).
+  const auditRows = auditEventsRes.data ?? [];
+  const undoneEventIds = new Set(
+    auditRows
+      .filter((e) => e.type === "undo")
+      .map((e) => (e.payload as Record<string, unknown> | null)?.undone_event_id)
+      .filter((id): id is string => typeof id === "string"),
+  );
+  const playerNameByPlayerId = new Map(
+    roster
+      .filter((r) => r.player_id && r.player?.name)
+      .map((r) => [r.player_id as string, r.player!.name]),
+  );
+  const auditEntries: AuditLogEntry[] = auditRows
+    .filter(
+      (e): e is typeof e & { type: AuditLogEntry["type"] } =>
+        e.type === "bust" ||
+        e.type === "rebuy" ||
+        e.type === "addon" ||
+        e.type === "chip_adjust",
+    )
+    .map((e) => {
+      const payload = (e.payload as Record<string, unknown> | null) ?? {};
+      const playerId = payload.player_id as string | undefined;
+      return {
+        id: e.id,
+        type: e.type,
+        createdAt: e.created_at,
+        playerName: (playerId ? playerNameByPlayerId.get(playerId) : null) ?? "—",
+        description: formatAuditDescription(e.type, payload),
+        undone: undoneEventIds.has(e.id),
+      };
+    });
+
   const cur = currentLevel(tournament);
   const nxt = nextLevel(tournament);
   const inPlay = roster.filter((r) => !r.busted_at_time);
@@ -135,14 +188,37 @@ export default async function LiveTournamentPage({
     0,
   );
 
+  // Bounty deduction mirrors performFinalize()'s: a flat dollar amount
+  // expressed as rakePerEntry so this projection matches what actually
+  // gets paid out at finalize.
+  const bountyEntries = roster.length + buybacks;
+  const bountyDeduction = tournament.bounty_target_player_id
+    ? Math.min(
+        tournament.bounty_amount ?? 0,
+        bountyEntries * tournament.buy_in_snapshot,
+      )
+    : 0;
+  const bountyRakePerEntry =
+    bountyEntries > 0 ? bountyDeduction / bountyEntries : 0;
+
   const payouts = computePayouts(
     tournament.prize_rules_snapshot as Parameters<typeof computePayouts>[0],
     {
       buyIns: roster.length,
       buybacks,
       buyInPrice: tournament.buy_in_snapshot,
+      rakePerEntry: bountyRakePerEntry,
     },
   );
+
+  const bountyTargetRow = tournament.bounty_target_player_id
+    ? roster.find((r) => r.player_id === tournament.bounty_target_player_id)
+    : undefined;
+  const bountyCollectedByRow = tournament.bounty_collected_by_player_id
+    ? roster.find(
+        (r) => r.player_id === tournament.bounty_collected_by_player_id,
+      )
+    : undefined;
 
   const buybackCfg = tournament.buyback_config_snapshot as {
     rebuyAllowedThroughLevel?: number;
@@ -533,6 +609,23 @@ export default async function LiveTournamentPage({
           </section>
         ) : null}
 
+        {bountyTargetRow ? (
+          <BountyPanel
+            tournamentId={tournament.id}
+            targetName={bountyTargetRow.player?.name ?? "—"}
+            amount={tournament.bounty_amount ?? 20}
+            targetBusted={Boolean(bountyTargetRow.busted_at_time)}
+            collectedByName={bountyCollectedByRow?.player?.name ?? null}
+            activePlayers={inPlay
+              .filter((r) => r.player_id !== bountyTargetRow.player_id)
+              .map((r) => ({
+                playerId: r.player_id ?? "",
+                name: r.player?.name ?? "—",
+              }))
+              .filter((p) => p.playerId !== "")}
+          />
+        ) : null}
+
         <section className="rounded-lg border border-fg/10 p-4">
           <div className="flex items-baseline justify-between">
             <h2 className="text-label text-[11px] font-semibold uppercase tracking-[0.25em]">
@@ -564,6 +657,13 @@ export default async function LiveTournamentPage({
               </li>
             ))}
           </ul>
+        </section>
+
+        <section className="rounded-lg border border-fg/10 p-4">
+          <h2 className="mb-2 text-label text-[11px] font-semibold uppercase tracking-[0.25em]">
+            Audit log
+          </h2>
+          <AuditLog tournamentId={tournament.id} entries={auditEntries} />
         </section>
 
         <section
