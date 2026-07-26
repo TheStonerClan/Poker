@@ -1,7 +1,10 @@
 import { formatMMSS } from "@/lib/tv/format";
 
 type Props = {
-  levelLabel: string;
+  /** Current small/big blinds, formatted (e.g. "100 / 200") — shown
+   *  above the timer instead of the level number so the number that
+   *  actually matters at the table is what draws the eye. */
+  blindsLabel: string;
   remainingSec: number;
   durationSec: number;
   nextBreakSec: number | null;
@@ -27,7 +30,7 @@ const CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
  * blowing past the ring or shrinking past readable on a phone preview.
  */
 export default function ClockRing({
-  levelLabel,
+  blindsLabel,
   remainingSec,
   durationSec,
   nextBreakSec,
@@ -103,8 +106,8 @@ export default function ClockRing({
       </svg>
 
       <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
-        <span className="text-label uppercase tracking-[0.4em] text-[clamp(0.85rem,2vmin,1.25rem)] mb-[clamp(0.25rem,0.5vmin,0.75rem)]">
-          {levelLabel}
+        <span className="font-mono text-gold-bright font-semibold tracking-[0.05em] tabular-nums text-[clamp(1.1rem,3.2vmin,1.9rem)] mb-[clamp(0.25rem,0.5vmin,0.75rem)]">
+          {blindsLabel}
         </span>
         <span className="font-mono text-fg leading-none tabular-nums text-[clamp(2.5rem,11vmin,7rem)]">
           {formatMMSS(remainingSec)}
