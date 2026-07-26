@@ -2054,8 +2054,15 @@ export async function undoEvent(input: {
         update.rebuys_used = Math.max(0, tp.rebuys_used - 1);
       }
       if (tokensSpentAfter <= 1) {
+        // tournament_players_buyback_consistency requires ALL of
+        // buyback_used_as / buyback_used_at_level / buyback_used_at_time
+        // to be null when buyback_used is false — clearing only the
+        // first two left buyback_used_at_time set, which violated the
+        // constraint on every rebuy undo.
         update.buyback_used = false;
         update.buyback_used_as = null;
+        update.buyback_used_at_level = null;
+        update.buyback_used_at_time = null;
       }
       const { error } = await supabase
         .from("tournament_players")
@@ -2081,8 +2088,13 @@ export async function undoEvent(input: {
         update.addons_used = Math.max(0, tp.addons_used - 1);
       }
       if (tokensSpentAfter <= 1) {
+        // Same tournament_players_buyback_consistency requirement as the
+        // rebuy branch above — all three buyback_used_* fields must go
+        // null together with buyback_used.
         update.buyback_used = false;
         update.buyback_used_as = null;
+        update.buyback_used_at_level = null;
+        update.buyback_used_at_time = null;
       }
       const { error } = await supabase
         .from("tournament_players")
