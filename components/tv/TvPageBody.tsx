@@ -232,12 +232,15 @@ export default async function TvPageBody({
       // Bust/rebuy/addon + break events power the TV's "last segment"
       // stats (shown during breaks) and the bust counter, which survives
       // rebuys (rebuying clears busted_at_time on the player row, but
-      // these events are append-only history).
+      // these events are append-only history). `undo` events are also
+      // pulled so the last-segment list can drop any bust/rebuy/addon
+      // that's since been reversed from the admin's audit log — without
+      // this, an undone action kept showing up on the break screen.
       supabase
         .from("tournament_events")
-        .select("type, payload, created_at")
+        .select("id, type, payload, created_at")
         .eq("tournament_id", tournamentRow.id)
-        .in("type", ["bust", "rebuy", "addon", "break_start", "break_end"])
+        .in("type", ["bust", "rebuy", "addon", "undo", "break_start", "break_end"])
         .order("created_at", { ascending: true })
         .limit(500),
       // Approved color-up exchanges. Sum of net_change is added to the
@@ -253,6 +256,7 @@ export default async function TvPageBody({
 
   const initialPlayers = (players ?? []) as unknown as TournamentPlayerWithName[];
   const initialEvents = (events ?? []) as Array<{
+    id: string;
     type: string;
     payload: Record<string, unknown> | null;
     created_at: string;
