@@ -17,6 +17,7 @@ import {
   latestChipSnapshotPerPlayer,
   type ChipSnapshotEvent,
 } from "@/lib/admin/chip-snapshots";
+import { formatAuditDescription, type AuditLogEntry } from "@/lib/admin/audit-log";
 import { formatBlinds, formatChips, formatMoney } from "@/lib/admin/format";
 import { createClient } from "@/lib/supabase/server";
 import { formatLevelLabel, levelCounts } from "@/lib/tv/levels";
@@ -32,11 +33,7 @@ import {
 
 import { AutoAdvanceWatcher } from "../../_components/AutoAdvanceWatcher";
 import { LevelControls } from "../../_components/LevelControls";
-import {
-  AuditLog,
-  formatAuditDescription,
-  type AuditLogEntry,
-} from "./_components/AuditLog";
+import { AuditLog } from "./_components/AuditLog";
 import { BountyPanel } from "./_components/BountyPanel";
 import { PlayerGrid } from "./_components/PlayerGrid";
 import { ColorUpInbox } from "./_components/ColorUpInbox";
