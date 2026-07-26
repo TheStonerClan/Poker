@@ -270,8 +270,10 @@ export async function bustPlayer(input: {
       });
 
       revalidatePath("/admin");
+      revalidatePath("/sandboxadmin");
       revalidatePath(`/admin/tournaments/${tp.tournament_id}`);
       revalidatePath("/tv");
+      revalidatePath("/sandboxtv");
       return;
     }
 
@@ -807,7 +809,7 @@ async function performFinalize(
   const { data: t } = await supabase
     .from("tournaments")
     .select(
-      "id, prize_rules_snapshot, buy_in_snapshot, status, finished_at",
+      "id, prize_rules_snapshot, buy_in_snapshot, status, finished_at, is_sandbox",
     )
     .eq("id", tournamentId)
     .maybeSingle();
@@ -1001,20 +1003,28 @@ async function performFinalize(
   // the signal_dispatches ledger and an admin can retry via the test
   // endpoint. Idempotency key `recap:<tournament_id>` means a re-finalize
   // (or admin re-trigger) won't double-send.
-  try {
-    const recapInput = await loadRecapForTournament(tournamentId, {
-      client: supabase,
-    });
-    const recapBody = buildRecapMessage(recapInput);
-    await dispatchMessage({
-      kind: "recap",
-      key: `recap:${tournamentId}`,
-      body: recapBody,
-    });
-  } catch (err) {
-    // Swallow — the ledger has the failure if dispatch got far enough,
-    // and the finalize itself is irreversibly committed.
-    console.error("recap dispatch failed", err);
+  //
+  // Sandbox tournaments never dispatch: the group resolver in
+  // lib/signal/group.ts picks the real group whenever this runs on the
+  // production deployment (VERCEL_ENV), and sandbox routes are live on
+  // that same deployment — without this guard, finalizing a test game
+  // would send a fake recap to the real house Signal chat.
+  if (!t.is_sandbox) {
+    try {
+      const recapInput = await loadRecapForTournament(tournamentId, {
+        client: supabase,
+      });
+      const recapBody = buildRecapMessage(recapInput);
+      await dispatchMessage({
+        kind: "recap",
+        key: `recap:${tournamentId}`,
+        body: recapBody,
+      });
+    } catch (err) {
+      // Swallow — the ledger has the failure if dispatch got far enough,
+      // and the finalize itself is irreversibly committed.
+      console.error("recap dispatch failed", err);
+    }
   }
 }
 
@@ -1048,10 +1058,19 @@ export async function finalizeTournament(
 
   await performFinalize(supabase, id, { chopTopTwo });
 
+  const { data: finished } = await supabase
+    .from("tournaments")
+    .select("is_sandbox")
+    .eq("id", id)
+    .maybeSingle();
+  const isSandbox = finished?.is_sandbox ?? false;
+
   revalidatePath("/admin");
+  revalidatePath("/sandboxadmin");
   revalidatePath(`/admin/tournaments/${id}`);
   revalidatePath("/tv");
-  redirect("/admin");
+  revalidatePath("/sandboxtv");
+  redirect(isSandbox ? "/sandboxadmin" : "/admin");
 }
 
 /**
@@ -1093,8 +1112,11 @@ export async function cancelScheduledTournament(
     if (error) throw new Error(error.message);
 
     revalidatePath("/admin");
+    revalidatePath("/sandboxadmin");
     revalidatePath("/admin/tournaments");
+    revalidatePath("/sandboxadmin/tournaments");
     revalidatePath("/tv");
+    revalidatePath("/sandboxtv");
   });
 }
 
@@ -1136,9 +1158,13 @@ export async function deleteFinalizedTournament(
     if (error) throw new Error(error.message);
 
     revalidatePath("/admin");
+    revalidatePath("/sandboxadmin");
     revalidatePath("/admin/tournaments");
+    revalidatePath("/sandboxadmin/tournaments");
     revalidatePath("/history");
+    revalidatePath("/sandboxadmin/history");
     revalidatePath("/tv");
+    revalidatePath("/sandboxtv");
   });
 }
 

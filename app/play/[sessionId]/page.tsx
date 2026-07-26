@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 
 import { PickName } from "@/components/player/PickName";
+import { SandboxBadge } from "@/components/SandboxBadge";
 import { slugifyPlayerName } from "@/lib/player/slug";
 import { createServiceClient } from "@/lib/supabase/service";
 
@@ -25,7 +26,7 @@ export default async function PlayEntryPage({ params }: PlayPageProps) {
   const { data: tournament, error: tErr } = await supabase
     .from("tournaments")
     .select(
-      "id, status, current_level, finished_at, template:tournament_templates(name)",
+      "id, status, current_level, finished_at, is_sandbox, template:tournament_templates(name)",
     )
     .eq("id", sessionId)
     .maybeSingle();
@@ -59,9 +60,12 @@ export default async function PlayEntryPage({ params }: PlayPageProps) {
   return (
     <main className="flex flex-1 flex-col px-5 py-6">
       <header className="mb-6">
-        <p className="text-label text-xs uppercase tracking-widest">
-          {tournamentName}
-        </p>
+        <div className="flex items-center gap-2">
+          <p className="text-label text-xs uppercase tracking-widest">
+            {tournamentName}
+          </p>
+          {tournament.is_sandbox ? <SandboxBadge /> : null}
+        </div>
         <h1 className="mt-1 text-3xl font-semibold text-fg">Pick your name</h1>
         <p className="mt-2 text-sm text-fg/60">
           Tap your name to claim your seat. One tap holds your spot until you

@@ -39,12 +39,16 @@ export type StartTournamentResult = {
   message?: string;
 };
 
-export async function startTournament(input: {
-  templateId: string;
-  playerIds: string[];
-  tables: TableConfig[];
-}): Promise<StartTournamentResult> {
+export async function startTournament(
+  input: {
+    templateId: string;
+    playerIds: string[];
+    tables: TableConfig[];
+  },
+  opts?: { isSandbox?: boolean },
+): Promise<StartTournamentResult> {
   await requireAdmin();
+  const isSandbox = opts?.isSandbox ?? false;
   const parsed = StartSchema.safeParse(input);
   if (!parsed.success) {
     return {
@@ -130,7 +134,8 @@ export async function startTournament(input: {
       .from("tournaments")
       .select("id, scheduled_at")
       .eq("template_id", template.id)
-      .eq("status", "scheduled");
+      .eq("status", "scheduled")
+      .eq("is_sandbox", isSandbox);
     const match = (existingForDate ?? []).find((row) => {
       if (!row.scheduled_at) return false;
       const rowDate =
@@ -151,11 +156,14 @@ export async function startTournament(input: {
     .from("tournaments")
     .select("id")
     .in("status", ["scheduled", "running", "paused"])
+    .eq("is_sandbox", isSandbox)
     .limit(1);
   if (active && active.length > 0) {
     return {
       status: "error",
-      message: "Another tournament is already active. Finalize it first.",
+      message: isSandbox
+        ? "Another sandbox tournament is already active. Finalize it first."
+        : "Another tournament is already active. Finalize it first.",
     };
   }
 
@@ -173,6 +181,7 @@ export async function startTournament(input: {
     .insert({
       template_id: template.id,
       status: "scheduled",
+      is_sandbox: isSandbox,
       scheduled_at: scheduledAt,
       buy_in_snapshot: template.buy_in,
       starting_stack_snapshot: template.starting_stack,
@@ -223,6 +232,6 @@ export async function startTournament(input: {
     return { status: "error", message: tpErr.message };
   }
 
-  revalidatePath("/admin");
+  revalidatePath(isSandbox ? "/sandboxadmin" : "/admin");
   redirect(`/admin/tournaments/${tournament.id}`);
 }

@@ -658,6 +658,7 @@ export type Database = {
           current_level: number
           finished_at: string | null
           id: string
+          is_sandbox: boolean
           level_paused_at: string | null
           level_started_at: string | null
           max_rebuys_snapshot: number
@@ -688,6 +689,7 @@ export type Database = {
           current_level?: number
           finished_at?: string | null
           id?: string
+          is_sandbox?: boolean
           level_paused_at?: string | null
           level_started_at?: string | null
           max_rebuys_snapshot: number
@@ -718,6 +720,7 @@ export type Database = {
           current_level?: number
           finished_at?: string | null
           id?: string
+          is_sandbox?: boolean
           level_paused_at?: string | null
           level_started_at?: string | null
           max_rebuys_snapshot?: number

@@ -57,6 +57,22 @@ export default async function SettingsPage() {
           <span className="text-fg/40">›</span>
         </Link>
 
+        <Link
+          href="/sandboxadmin"
+          className="flex items-center justify-between rounded-lg border border-orange-500/30 px-4 py-3 hover:border-orange-500/60"
+        >
+          <div>
+            <p className="text-label text-[11px] font-semibold uppercase tracking-[0.25em] text-orange-400">
+              Sandbox
+            </p>
+            <p className="mt-1 text-sm text-fg/80">
+              Test tournaments, TV display, and history — isolated from
+              real leaderboards and Signal.
+            </p>
+          </div>
+          <span className="text-fg/40">›</span>
+        </Link>
+
         <SignalCard configured={signalConfigured} groupId={signalGroupId} />
 
         <section className="rounded-lg border border-fg/10 p-4">

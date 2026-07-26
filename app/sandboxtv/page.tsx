@@ -4,6 +4,6 @@ import TvPageBody from "@/components/tv/TvPageBody";
 // origin); never prerender it at build time.
 export const dynamic = "force-dynamic";
 
-export default async function TvPage() {
-  return <TvPageBody isSandbox={false} />;
+export default async function SandboxTvPage() {
+  return <TvPageBody isSandbox={true} />;
 }

@@ -1,6 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 
 import { TopBar } from "@/components/admin/TopBar";
+import { SandboxBadge } from "@/components/SandboxBadge";
 import { getAuthContext } from "@/lib/auth/table-admin";
 import Link from "next/link";
 
@@ -165,12 +166,15 @@ export default async function TableAdminPage({
             : { href: "/", label: "Home" }
         }
         action={
-          <span
-            className="rounded-md border px-3 py-2 text-[10px] font-semibold uppercase tracking-widest"
-            style={{ borderColor: css.border, color: css.text }}
-          >
-            {ctx.isGlobalAdmin ? "Admin" : "Table admin"}
-          </span>
+          <div className="flex items-center gap-2">
+            {tournament.is_sandbox ? <SandboxBadge /> : null}
+            <span
+              className="rounded-md border px-3 py-2 text-[10px] font-semibold uppercase tracking-widest"
+              style={{ borderColor: css.border, color: css.text }}
+            >
+              {ctx.isGlobalAdmin ? "Admin" : "Table admin"}
+            </span>
+          </div>
         }
       />
 

@@ -79,6 +79,14 @@ export type FetchUpcomingOpts = {
   limit?: number;
   /** Override `now` for tests. */
   now?: Date;
+  /**
+   * When true, only materialized sandbox-flagged tournaments are
+   * returned, and the recurrence-projection step (2) is skipped
+   * entirely — recurring templates are a real-schedule concept and
+   * don't have a meaningful sandbox projection. Defaults to false
+   * (real tournaments only).
+   */
+  sandbox?: boolean;
 };
 
 /**
@@ -92,6 +100,7 @@ export async function fetchUpcomingTournaments(
   const limit = opts.limit ?? 10;
   const adminLinks = opts.adminLinks ?? false;
   const now = opts.now ?? new Date();
+  const sandbox = opts.sandbox ?? false;
 
   // 1. Materialized scheduled tournaments. Joined to the template so
   //    we can show the venue zone next to the time.
@@ -101,6 +110,7 @@ export async function fetchUpcomingTournaments(
       "id, scheduled_at, template_id, template:tournament_templates(id, name, location, start_timezone)",
     )
     .eq("status", "scheduled")
+    .eq("is_sandbox", sandbox)
     .is("finished_at", null);
 
   const materialized: UpcomingTournament[] = (scheduledData ?? []).map(
@@ -126,12 +136,16 @@ export async function fetchUpcomingTournaments(
     },
   );
 
-  // 2. Projected recurrences.
-  const { data: templatesData } = await supabase
-    .from("tournament_templates")
-    .select(
-      "id, name, location, recurrence_rule, start_time, start_timezone",
-    );
+  // 2. Projected recurrences. Skipped entirely in sandbox mode —
+  //    recurrence/templates are a real-schedule concept and sandbox
+  //    tournaments are always ad-hoc.
+  const { data: templatesData } = sandbox
+    ? { data: [] }
+    : await supabase
+        .from("tournament_templates")
+        .select(
+          "id, name, location, recurrence_rule, start_time, start_timezone",
+        );
 
   // "This template already has a materialized scheduled tournament
   // on this calendar date" set so a projection doesn't double-up the

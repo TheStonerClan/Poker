@@ -39,7 +39,11 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
     data: { user },
   } = await supabase.auth.getUser();
 
-  const isAdminRoute = path === "/admin" || path.startsWith("/admin/");
+  const isAdminRoute =
+    path === "/admin" ||
+    path.startsWith("/admin/") ||
+    path === "/sandboxadmin" ||
+    path.startsWith("/sandboxadmin/");
   const isLoginRoute = path === "/auth/login";
 
   if (isAdminRoute && !user) {
