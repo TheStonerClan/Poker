@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { PickName } from "@/components/player/PickName";
@@ -71,6 +72,12 @@ export default async function PlayEntryPage({ params }: PlayPageProps) {
           Tap your name to claim your seat. One tap holds your spot until you
           close the tab.
         </p>
+        <Link
+          href={`/play/${sessionId}/leaderboard`}
+          className="mt-3 inline-block text-sm text-gold underline"
+        >
+          View chip leaderboard →
+        </Link>
       </header>
 
       {tournament.finished_at ? (

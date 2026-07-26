@@ -127,6 +127,7 @@ export function PlayerHome(props: PlayerHomeProps) {
         active={tab}
         onChange={setTab}
         disableActions={!showAdminLockedTabs}
+        sessionId={sessionId}
       />
     </main>
   );

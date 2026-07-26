@@ -7,7 +7,7 @@ import { formatBlinds } from "@/lib/tv/format";
 
 import BlindLevel from "@/components/tv/BlindLevel";
 import BottomBanner from "@/components/tv/BottomBanner";
-import BreakPanel from "@/components/tv/BreakPanel";
+import BreakPanel, { type SegmentEvent } from "@/components/tv/BreakPanel";
 import ChipStack from "@/components/tv/ChipStack";
 import ClockRing from "@/components/tv/ClockRing";
 import NextLevel from "@/components/tv/NextLevel";
@@ -296,6 +296,15 @@ export default function TvDisplay({
   const counts = aggregatePlayers(players, chipsCfg);
   const totalBuybacks = counts.reEntries + counts.addOns;
 
+  const playerNameById = new Map(
+    players
+      .filter((p) => p.players?.name)
+      .map((p) => [p.player_id, p.players?.name ?? ""]),
+  );
+  const playerStateById = new Map(
+    players.map((p) => [p.player_id, p]),
+  );
+
   // Per-table breakdown for the chip-leader / average strip. Same
   // chip-conservation model, scoped to each table's seated players. The
   // strip itself is hidden by the component for single-table tournaments.
@@ -318,7 +327,27 @@ export default function TvDisplay({
     entries: counts.entries,
     buybacks: totalBuybacks,
   });
-  const { payouts, effectivePool } = computePayouts(prizeRules, rawPool);
+
+  // Bounty: $20 (configurable) against the highest-placed returning
+  // player from the prior tournament, resolved once at creation and
+  // persisted on the row (see lib/admin/bounty.ts). It comes out of the
+  // pool before payouts are computed — applied for the whole night once
+  // a target was resolvable, regardless of whether it's been collected
+  // yet, since the deduction reflects money set aside, not money paid.
+  const bountyTargetId = tournament.bounty_target_player_id;
+  const bountyAmount = tournament.bounty_amount ?? 0;
+  const bountyDeduction = bountyTargetId ? Math.min(bountyAmount, rawPool) : 0;
+  const bountyTarget = bountyTargetId
+    ? (playerNameById.get(bountyTargetId) ?? null)
+    : null;
+  const bountyCollectedBy = tournament.bounty_collected_by_player_id
+    ? (playerNameById.get(tournament.bounty_collected_by_player_id) ?? null)
+    : null;
+
+  const { payouts, effectivePool } = computePayouts(
+    prizeRules,
+    rawPool - bountyDeduction,
+  );
 
   const denominations =
     (tournament.chip_denominations_snapshot as unknown as ChipDenomination[]) ?? [];
@@ -340,13 +369,14 @@ export default function TvDisplay({
       isBreak && currentLevel?.level_num === buyback.addOnAtBreakLevel,
   });
 
-  // Bust list for the previous segment, derived from `tournament_events`
-  // rather than `tournament_players`. The latter clears `busted_at_time`
-  // on rebuy, which would mask the original bust from the segment count;
-  // events are append-only and survive rebuys correctly.
+  // Bust/rebuy/addon list for the previous segment, derived from
+  // `tournament_events` rather than `tournament_players`. The latter
+  // clears `busted_at_time` on rebuy, which would mask the original bust
+  // from the segment count; events are append-only and survive rebuys
+  // correctly.
   //
   // "Last segment" = since the most recent break_start (or break_end —
-  // whichever is later). Falls back to "all busts so far" when there's
+  // whichever is later). Falls back to "everything so far" when there's
   // been no break yet.
   const lastSegmentBoundary = (() => {
     for (let i = events.length - 1; i >= 0; i--) {
@@ -358,42 +388,36 @@ export default function TvDisplay({
     return 0;
   })();
 
-  const playerNameById = new Map(
-    players
-      .filter((p) => p.players?.name)
-      .map((p) => [p.player_id, p.players?.name ?? ""]),
-  );
-  const playerStateById = new Map(
-    players.map((p) => [p.player_id, p]),
-  );
-
-  const lastSegmentBusted = isBreak
+  const lastSegmentEvents: SegmentEvent[] = isBreak
     ? events
         .filter(
           (e) =>
-            e.type === "bust" &&
+            (e.type === "bust" || e.type === "rebuy" || e.type === "addon") &&
             new Date(e.created_at).getTime() >= lastSegmentBoundary,
         )
-        .slice(-12)
+        .slice(-24)
         .reverse()
         .map((e) => {
           const playerId = (e.payload?.player_id as string | undefined) ?? null;
           const atLevel =
             (e.payload?.at_level as number | undefined | null) ?? null;
-          const player = playerId ? playerStateById.get(playerId) : undefined;
-          // "Rebought" reflects the player's CURRENT state — they busted in
-          // this segment but may have rebought since. Useful info on the
-          // break panel without losing the bust from the count.
-          const rebought = !!(
-            player?.buyback_used && player.buyback_used_as === "rebuy"
-          );
-          return {
-            name:
-              (playerId ? playerNameById.get(playerId) : null) ??
-              "Unknown",
-            level: atLevel,
-            rebought,
-          };
+          const name =
+            (playerId ? playerNameById.get(playerId) : null) ?? "Unknown";
+          if (e.type === "bust") {
+            const player = playerId ? playerStateById.get(playerId) : undefined;
+            // "Rebought" reflects the player's CURRENT state — they busted
+            // in this segment but may have rebought since. Useful info
+            // without losing the bust from the list.
+            const rebought = !!(
+              player?.buyback_used && player.buyback_used_as === "rebuy"
+            );
+            return { type: "bust", name, level: atLevel, rebought };
+          }
+          const chips =
+            e.type === "rebuy"
+              ? ((e.payload?.chips as number | undefined) ?? null)
+              : ((e.payload?.chips_added as number | undefined) ?? null);
+          return { type: e.type as "rebuy" | "addon", name, level: atLevel, chips };
         })
     : [];
 
@@ -418,19 +442,21 @@ export default function TvDisplay({
       <hr className="border-t border-gold/40 mx-[clamp(0.5rem,2vw,2rem)]" />
 
       {/* MIDDLE BAND */}
-      <main className="flex-1 grid grid-cols-[1fr_auto_1fr] items-center px-[clamp(1rem,3vw,3rem)] py-[clamp(0.75rem,2vh,2rem)] gap-[clamp(0.75rem,2vw,2rem)]">
+      <main className="flex-1 grid grid-cols-[1fr_auto_1fr] items-stretch px-[clamp(1rem,3vw,3rem)] py-[clamp(0.75rem,2vh,2rem)] gap-[clamp(0.75rem,2vw,2rem)]">
         <div className="self-center justify-self-start">
           <ChipStack denominations={denominations} />
         </div>
 
-        <div className="justify-self-center">
+        <div className="self-center justify-self-center">
           {isBreak && currentLevel ? (
             <BreakPanel
               remainingSec={clock.remainingSec}
               level={currentLevel}
               nextLevel={nextPlayingLevel}
               levels={levels}
-              busted={lastSegmentBusted}
+              lastSegmentEvents={lastSegmentEvents}
+              tableStats={tableStats}
+              bigBlind={currentLevel?.big}
             />
           ) : (
             <ClockRing
@@ -447,19 +473,28 @@ export default function TvDisplay({
           )}
         </div>
 
-        <div className="self-center justify-self-end">
-          <PrizePool totalPool={effectivePool} payouts={payouts} />
+        {/* RIGHT COLUMN — prize pool up top, per-table top-3 chip
+            leaderboard stacked underneath it so multi-table nights get
+            an elongated card list instead of a cramped horizontal strip. */}
+        <div className="flex flex-col items-end gap-[clamp(0.75rem,1.5vh,1.5rem)] justify-self-end w-full max-w-[18rem]">
+          <PrizePool
+            totalPool={effectivePool}
+            payouts={payouts}
+            bounty={
+              bountyTargetId
+                ? {
+                    amount: bountyAmount,
+                    targetName: bountyTarget,
+                    collectedByName: bountyCollectedBy,
+                  }
+                : null
+            }
+          />
+          {tableStats.length > 1 ? (
+            <TableLeaders stats={tableStats} bigBlind={currentLevel?.big} />
+          ) : null}
         </div>
       </main>
-
-      {/* TABLE LEADERS — per-table chip leader + average for multi-table
-          tournaments. Hidden when there's only one table (the
-          tournament-wide stats in the footer cover everything). */}
-      {tableStats.length > 1 ? (
-        <section className="px-[clamp(1rem,3vw,3rem)] pb-[clamp(0.5rem,1vh,1rem)]">
-          <TableLeaders stats={tableStats} bigBlind={currentLevel?.big} />
-        </section>
-      ) : null}
 
       <hr className="border-t border-gold/40 mx-[clamp(0.5rem,2vw,2rem)]" />
 
@@ -472,20 +507,21 @@ export default function TvDisplay({
         </div>
 
         <div className="justify-self-end flex items-end gap-6">
-          {colorUpActive ? (
-            <div className="flex flex-col items-center gap-1">
-              <div className="bg-white p-2 rounded">
-                <QRCodeSVG
-                  value={`${playSessionBaseUrl}/${tournamentId}`}
-                  size={88}
-                  level="M"
-                />
-              </div>
-              <span className="text-label uppercase tracking-[0.25em] text-[10px]">
-                Color-up
-              </span>
+          {/* Always visible — not just during color-up — so players can
+              scan for the chip leaderboard / their stats at any point in
+              the night, not only when a color-up window is open. */}
+          <div className="flex flex-col items-center gap-1">
+            <div className="bg-white p-2 rounded">
+              <QRCodeSVG
+                value={`${playSessionBaseUrl}/${tournamentId}`}
+                size={88}
+                level="M"
+              />
             </div>
-          ) : null}
+            <span className="text-label uppercase tracking-[0.25em] text-[10px]">
+              {colorUpActive ? "Color-up" : "Player view"}
+            </span>
+          </div>
           <NextLevel next={nextPlayingLevel} levels={levels} />
         </div>
       </footer>
@@ -528,7 +564,9 @@ function bannerFor(args: {
   isAddOnBreak: boolean;
 }): string {
   if (args.isBreak) {
-    if (args.isAddOnBreak) return "L8 add-on available — see admin";
+    if (args.isAddOnBreak) {
+      return `Level ${args.addOnAtBreakLevel} add-on available — see admin`;
+    }
     return "Break — players, stretch your legs";
   }
   if (
@@ -538,7 +576,14 @@ function bannerFor(args: {
   ) {
     return `(Re-)Entry until the end of Level ${args.rebuyAllowedThroughLevel}`;
   }
-  if (args.addOnAtBreakLevel) {
+  // Only show the add-on teaser while that break is still upcoming — without
+  // the upper bound this stayed truthy (and visible) for the rest of the
+  // tournament once an add-on level was configured, long after that break
+  // had already passed.
+  if (
+    args.addOnAtBreakLevel &&
+    args.currentLevelNum <= args.addOnAtBreakLevel
+  ) {
     return `Next add-on opportunity: Level ${args.addOnAtBreakLevel} break`;
   }
   return "";

@@ -327,10 +327,10 @@ export type TableStats = {
   rebuys: number;
   addOns: number;
   /**
-   * Active player with the largest current_chips. Null if table has
-   * zero active players.
+   * Top 3 active players by current_chips, descending. Empty array if
+   * the table has zero active players.
    */
-  chipLeader: { playerId: string; name: string; chips: number } | null;
+  chipLeaders: { playerId: string; name: string; chips: number }[];
 };
 
 export function aggregateByTable(args: {
@@ -375,7 +375,7 @@ export function aggregateByTable(args: {
     let activePlayers = 0;
     let rebuys = 0;
     let addOns = 0;
-    let chipLeader: TableStats["chipLeader"] = null;
+    const activeStacks: TableStats["chipLeaders"] = [];
 
     for (const r of tableRows) {
       const tk = tokenCountsForRow(r);
@@ -383,16 +383,16 @@ export function aggregateByTable(args: {
       addOns += tk.addOns;
       if (r.busted_at_time == null) {
         activePlayers += 1;
-        const chips = r.current_chips ?? 0;
-        if (chipLeader == null || chips > chipLeader.chips) {
-          chipLeader = {
-            playerId: r.player_id ?? "",
-            name: r.players?.name ?? "—",
-            chips,
-          };
-        }
+        activeStacks.push({
+          playerId: r.player_id ?? "",
+          name: r.players?.name ?? "—",
+          chips: r.current_chips ?? 0,
+        });
       }
     }
+    const chipLeaders = activeStacks
+      .sort((a, b) => b.chips - a.chips)
+      .slice(0, 3);
 
     const seatedPlayers = tableRows.length;
     const colorUpDelta = colorUpByTable.get(tableNumber) ?? 0;
@@ -415,7 +415,7 @@ export function aggregateByTable(args: {
       averageChips,
       rebuys,
       addOns,
-      chipLeader,
+      chipLeaders,
     });
   }
   return out;

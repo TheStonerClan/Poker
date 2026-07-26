@@ -11,25 +11,23 @@ type Props = {
 };
 
 /**
- * Per-table chip leader + average strip for the live TV display. Hidden
- * for single-table tournaments where the tournament-wide stats already
- * cover everything. Each card uses the table's configured color so
- * players can spot their own table at a glance.
+ * Per-table top-3 chip leaderboard for the live TV display. Lives in the
+ * right column stacked under <PrizePool> — a vertical list of cards (one
+ * per table) rather than a horizontal strip, so each card has room to
+ * show 3 ranked stacks instead of just the single leader. Hidden for
+ * single-table tournaments where the tournament-wide stats in the footer
+ * already cover everything.
  *
  * Tables with zero active players are dropped — once everyone at a
  * table has busted out, or after a Merge consolidates them onto a
  * different table, the empty card stops cluttering the strip.
  */
 export default function TableLeaders({ stats, bigBlind }: Props) {
-  // Filter out tables with no active players. Two cases produce these:
-  // (a) every active player at that table has busted out, and (b) Merge
-  // moved them to another table. Either way the card carries no useful
-  // current-state info and just makes the strip noisier.
   const active = stats.filter((s) => s.activePlayers > 0);
   if (active.length <= 1) return null;
 
   return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-[clamp(0.5rem,1vw,1rem)]">
+    <div className="flex flex-col gap-[clamp(0.4rem,1vh,0.75rem)] w-full">
       {active.map((s) => {
         const css = TABLE_COLOR_CSS[s.color];
         const bbCount =
@@ -39,7 +37,7 @@ export default function TableLeaders({ stats, bigBlind }: Props) {
         return (
           <div
             key={s.tableNumber}
-            className="rounded-md border-2 px-[clamp(0.5rem,1vw,1rem)] py-[clamp(0.4rem,0.8vh,0.75rem)]"
+            className="rounded-md border-2 px-[clamp(0.6rem,1vw,1rem)] py-[clamp(0.4rem,0.8vh,0.75rem)]"
             style={{
               borderColor: css.border,
               background: css.bg,
@@ -47,58 +45,43 @@ export default function TableLeaders({ stats, bigBlind }: Props) {
           >
             <div className="flex items-baseline justify-between gap-2">
               <span
-                className="uppercase tracking-[0.25em] text-[clamp(0.55rem,0.85vw,0.75rem)] font-semibold truncate"
+                className="uppercase tracking-[0.25em] text-[clamp(0.6rem,0.9vw,0.8rem)] font-semibold truncate"
                 style={{ color: css.text }}
               >
                 {s.name}
               </span>
               <span className="font-mono text-fg/55 text-[clamp(0.55rem,0.8vw,0.7rem)] tabular-nums whitespace-nowrap">
-                {s.activePlayers}/{s.maxSeats}
+                {s.activePlayers}/{s.maxSeats} · avg {formatChips(s.averageChips)}
+                {bbCount != null ? ` (${bbCount} BB)` : ""}
               </span>
             </div>
-            <div className="mt-[clamp(0.25rem,0.5vh,0.5rem)] grid grid-cols-2 gap-[clamp(0.25rem,0.5vw,0.5rem)]">
-              <Stat
-                label="Avg"
-                value={formatChips(s.averageChips)}
-                sub={bbCount != null ? `${bbCount} BB` : null}
-              />
-              <Stat
-                label="Leader"
-                value={s.chipLeader ? s.chipLeader.name : "—"}
-                sub={
-                  s.chipLeader ? formatChips(s.chipLeader.chips) : null
-                }
-              />
-            </div>
+            <ol className="mt-[clamp(0.3rem,0.6vh,0.6rem)] flex flex-col gap-[clamp(0.15rem,0.3vh,0.3rem)]">
+              {s.chipLeaders.length === 0 ? (
+                <li className="text-fg/40 text-[clamp(0.65rem,0.9vw,0.8rem)]">—</li>
+              ) : (
+                s.chipLeaders.map((leader, i) => (
+                  <li
+                    key={leader.playerId || i}
+                    className="flex items-baseline justify-between gap-2"
+                  >
+                    <span className="flex items-baseline gap-1.5 min-w-0">
+                      <span className="text-label text-[clamp(0.55rem,0.75vw,0.7rem)] tabular-nums w-3 shrink-0">
+                        {i + 1}
+                      </span>
+                      <span className="text-fg text-[clamp(0.7rem,1vw,0.9rem)] truncate">
+                        {leader.name}
+                      </span>
+                    </span>
+                    <span className="font-mono text-value text-[clamp(0.7rem,1vw,0.9rem)] tabular-nums whitespace-nowrap">
+                      {formatChips(leader.chips)}
+                    </span>
+                  </li>
+                ))
+              )}
+            </ol>
           </div>
         );
       })}
-    </div>
-  );
-}
-
-function Stat({
-  label,
-  value,
-  sub,
-}: {
-  label: string;
-  value: string;
-  sub?: string | null;
-}) {
-  return (
-    <div className="flex flex-col">
-      <span className="text-label uppercase tracking-[0.2em] text-[clamp(0.5rem,0.7vw,0.65rem)]">
-        {label}
-      </span>
-      <span className="font-mono text-fg text-[clamp(0.85rem,1.2vw,1.1rem)] tabular-nums truncate">
-        {value}
-      </span>
-      {sub ? (
-        <span className="font-mono text-fg/55 text-[clamp(0.55rem,0.8vw,0.75rem)] tabular-nums">
-          {sub}
-        </span>
-      ) : null}
     </div>
   );
 }

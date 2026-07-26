@@ -23,6 +23,32 @@ import type { TablesUpdate } from "@/lib/database.types";
 
 const IdSchema = z.uuid();
 
+/**
+ * Freeze the clock the moment a Balance or Merge is triggered, so the
+ * timer doesn't keep counting down while players are physically getting
+ * up and moving seats. Mirrors pauseTournament()'s update + event, but is
+ * a no-op if the tournament is already paused/scheduled/etc — the caller
+ * resumes manually via the existing Resume button once the room settles.
+ */
+async function pauseForSeatShuffle(
+  supabase: SupabaseAny,
+  tournamentId: string,
+  status: string,
+): Promise<void> {
+  if (status !== "running") return;
+  const { error } = await supabase
+    .from("tournaments")
+    .update({ status: "paused", level_paused_at: new Date().toISOString() })
+    .eq("id", tournamentId);
+  if (error) throw new Error(error.message);
+
+  await supabase.from("tournament_events").insert({
+    tournament_id: tournamentId,
+    type: "level_pause",
+    payload: { at: new Date().toISOString(), reason: "table_shuffle" },
+  });
+}
+
 async function refresh(tournamentId: string) {
   revalidatePath("/admin");
   revalidatePath(`/admin/tournaments/${tournamentId}`);
@@ -203,6 +229,7 @@ export async function bustPlayer(input: {
       busted_at_time: slot.busted_at_time,
       table_number: slot.table_number,
       seat_number: slot.seat_number,
+      current_chips: slot.current_chips,
     };
 
     const { data: t } = await supabase
@@ -254,6 +281,10 @@ export async function bustPlayer(input: {
         at_level: t?.current_level ?? null,
         table_number: tp.table_number ?? null,
         seat_number: tp.seat_number ?? null,
+        // Recorded so an admin-triggered undo can restore the exact
+        // pre-bust stack — bustPlayer zeroes current_chips, so without
+        // this the value would be gone for good.
+        chips_before_bust: tp.current_chips ?? 0,
       },
     });
 
@@ -306,6 +337,57 @@ async function runAdminAction(
           : "Unknown server error";
     return { ok: false, error: message };
   }
+}
+
+const CollectBountySchema = z.object({
+  tournamentId: z.uuid(),
+  collectedByPlayerId: z.uuid(),
+});
+
+/**
+ * Record who busted the resolved bounty target. Admin-only (this is a
+ * financial credit, like rebuy/addon). Idempotent-ish: re-collecting just
+ * overwrites who gets credit, which is fine for a mid-night correction —
+ * there's no separate "uncollect".
+ */
+export async function collectBounty(input: {
+  tournamentId: string;
+  collectedByPlayerId: string;
+}): Promise<AdminActionResult> {
+  return runAdminAction(async () => {
+    await requireAdmin();
+    const { tournamentId, collectedByPlayerId } =
+      CollectBountySchema.parse(input);
+    const supabase = await createClient();
+
+    const { data: t } = await supabase
+      .from("tournaments")
+      .select("bounty_target_player_id, bounty_amount")
+      .eq("id", tournamentId)
+      .maybeSingle();
+    if (!t) throw new Error("Tournament not found");
+    if (!t.bounty_target_player_id) {
+      throw new Error("No bounty is active for this tournament.");
+    }
+
+    const { error } = await supabase
+      .from("tournaments")
+      .update({ bounty_collected_by_player_id: collectedByPlayerId })
+      .eq("id", tournamentId);
+    if (error) throw new Error(error.message);
+
+    await supabase.from("tournament_events").insert({
+      tournament_id: tournamentId,
+      type: "bounty_collected",
+      payload: {
+        target_player_id: t.bounty_target_player_id,
+        collected_by_player_id: collectedByPlayerId,
+        amount: t.bounty_amount,
+      },
+    });
+
+    await refresh(tournamentId);
+  });
 }
 
 export async function rebuyPlayer(input: {
@@ -809,7 +891,7 @@ async function performFinalize(
   const { data: t } = await supabase
     .from("tournaments")
     .select(
-      "id, prize_rules_snapshot, buy_in_snapshot, status, finished_at, is_sandbox",
+      "id, prize_rules_snapshot, buy_in_snapshot, status, finished_at, is_sandbox, bounty_target_player_id, bounty_amount",
     )
     .eq("id", tournamentId)
     .maybeSingle();
@@ -915,12 +997,24 @@ async function performFinalize(
     0,
   );
 
+  // Bounty deduction: prize-math's Pool has no flat side-pot hook, only a
+  // per-entry rake, so a flat $20 is expressed as rakePerEntry = amount /
+  // entries — entries * (amount / entries) nets out to exactly `amount`
+  // off the top, matching the live TV estimate in TvDisplay.tsx which
+  // applies the same $20 before computing payouts.
+  const entries = players.length + buybacks;
+  const bountyDeduction = t.bounty_target_player_id
+    ? Math.min(t.bounty_amount ?? 0, entries * t.buy_in_snapshot)
+    : 0;
+  const rakePerEntry = entries > 0 ? bountyDeduction / entries : 0;
+
   const payouts = computePayouts(
     t.prize_rules_snapshot as Parameters<typeof computePayouts>[0],
     {
       buyIns: players.length,
       buybacks,
       buyInPrice: t.buy_in_snapshot,
+      rakePerEntry,
     },
   );
 
@@ -1284,6 +1378,7 @@ export async function balanceTables(
         `Balance is only available during play (currently ${t.status}).`,
       );
     }
+    await pauseForSeatShuffle(supabase, id, t.status);
 
     const tables = resolveTablesConfig({
       tablesConfig: t.tables_config,
@@ -1400,6 +1495,7 @@ export async function mergeTables(
         `Merge is only available during play (currently ${t.status}).`,
       );
     }
+    await pauseForSeatShuffle(supabase, id, t.status);
 
     const tables = resolveTablesConfig({
       tablesConfig: t.tables_config,
@@ -1771,5 +1867,241 @@ export async function adjustChips(input: {
     });
 
     await refresh(slot.tournament_id);
+  });
+}
+
+// ─── Audit log undo ─────────────────────────────────────────────────────
+
+const UndoEventSchema = z.object({
+  tournamentId: z.uuid(),
+  eventId: z.uuid(),
+});
+
+type AuditEventRow = {
+  id: string;
+  type: string;
+  created_at: string;
+  payload: Record<string, unknown> | null;
+};
+
+/**
+ * Compensating reversal for a bust/rebuy/addon/chip_adjust mistake — e.g.
+ * marking the wrong player out and not noticing until several actions
+ * later. Admin-only, regardless of who could perform the original action
+ * (table admins can bust/chip-edit, but can't undo).
+ *
+ * `tournament_events` is append-only (DB trigger blocks UPDATE/DELETE), so
+ * this never touches the original row — it applies the inverse state
+ * change to `tournament_players` and inserts a new `undo` event
+ * referencing the original by id. The audit-log UI treats any event whose
+ * id shows up as `undone_event_id` on a later `undo` event as already
+ * undone (no double-undo).
+ *
+ * Best-effort by design: each branch restores from what THIS event's
+ * payload recorded. If some other action touched the same player in
+ * between, the result may not be a perfect point-in-time rewind — this is
+ * a mistake-correction tool, not a full ledger replay.
+ */
+export async function undoEvent(input: {
+  tournamentId: string;
+  eventId: string;
+}): Promise<AdminActionResult> {
+  return runAdminAction(async () => {
+    await requireAdmin();
+    const { tournamentId, eventId } = UndoEventSchema.parse(input);
+    const supabase = await createClient();
+
+    const { data: event } = await supabase
+      .from("tournament_events")
+      .select("id, type, created_at, payload")
+      .eq("id", eventId)
+      .eq("tournament_id", tournamentId)
+      .maybeSingle();
+    if (!event) throw new Error("Event not found.");
+    const row = event as AuditEventRow;
+
+    if (!["bust", "rebuy", "addon", "chip_adjust"].includes(row.type)) {
+      throw new Error(`Can't undo a "${row.type}" event.`);
+    }
+
+    // Reject double-undo: has a later `undo` event already claimed this one?
+    const { data: existingUndos } = await supabase
+      .from("tournament_events")
+      .select("payload")
+      .eq("tournament_id", tournamentId)
+      .eq("type", "undo");
+    const alreadyUndone = (existingUndos ?? []).some(
+      (u) => (u.payload as Record<string, unknown> | null)?.undone_event_id === eventId,
+    );
+    if (alreadyUndone) throw new Error("This action was already undone.");
+
+    const payload = row.payload ?? {};
+    const tournamentPlayerId = payload.tournament_player_id as string | undefined;
+    if (!tournamentPlayerId) {
+      throw new Error("Event is missing the player reference; can't undo.");
+    }
+
+    if (row.type === "bust") {
+      const chipsBeforeBust = (payload.chips_before_bust as number | undefined) ?? 0;
+      const tableNumber = (payload.table_number as number | null | undefined) ?? null;
+      const seatNumber = (payload.seat_number as number | null | undefined) ?? null;
+
+      const { error } = await supabase
+        .from("tournament_players")
+        .update({
+          busted_at_time: null,
+          busted_at_level: null,
+          current_chips: chipsBeforeBust,
+          table_number: tableNumber,
+          seat_number: seatNumber,
+          finishing_position: null,
+        })
+        .eq("id", tournamentPlayerId);
+      if (error) throw new Error(error.message);
+
+      // If this bust triggered an auto-finalize (dropped the field to one
+      // survivor), reopen the tournament — this is the exact "marked the
+      // wrong player out and it auto-finalized" scenario.
+      const { data: t } = await supabase
+        .from("tournaments")
+        .select("status")
+        .eq("id", tournamentId)
+        .maybeSingle();
+      if (t?.status === "finished") {
+        const [{ data: mostRecentBust }, { data: mostRecentFinalize }] =
+          await Promise.all([
+            supabase
+              .from("tournament_events")
+              .select("id")
+              .eq("tournament_id", tournamentId)
+              .eq("type", "bust")
+              .order("created_at", { ascending: false })
+              .limit(1)
+              .maybeSingle(),
+            supabase
+              .from("tournament_events")
+              .select("payload")
+              .eq("tournament_id", tournamentId)
+              .eq("type", "finalize")
+              .order("created_at", { ascending: false })
+              .limit(1)
+              .maybeSingle(),
+          ]);
+        const finalizeWasAuto =
+          (mostRecentFinalize?.payload as Record<string, unknown> | null)
+            ?.auto === true;
+        // Only reopen when this bust was THE trigger for an auto-finalize
+        // (the exact "marked the wrong player out and it auto-finalized"
+        // scenario) — never for a deliberately, manually-finalized night
+        // that just happens to have this bust as its most recent one.
+        if (mostRecentBust?.id === eventId && finalizeWasAuto) {
+          const { error: reopenErr } = await supabase
+            .from("tournaments")
+            .update({
+              status: "paused",
+              finished_at: null,
+              level_paused_at: new Date().toISOString(),
+            })
+            .eq("id", tournamentId);
+          if (reopenErr) throw new Error(reopenErr.message);
+          await supabase
+            .from("prize_distributions")
+            .delete()
+            .eq("tournament_id", tournamentId);
+        }
+      }
+    } else if (row.type === "rebuy") {
+      // Rebuy SETS current_chips outright (the player was at 0 post-bust),
+      // so undoing it means re-busting them — restore the busted_at_time
+      // / busted_at_level / table from whichever bust immediately preceded
+      // this rebuy, rather than just subtracting a delta.
+      const { data: priorBust } = await supabase
+        .from("tournament_events")
+        .select("created_at, payload")
+        .eq("tournament_id", tournamentId)
+        .eq("type", "bust")
+        .contains("payload", { tournament_player_id: tournamentPlayerId })
+        .lt("created_at", row.created_at)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      const priorBustPayload = priorBust?.payload as
+        | Record<string, unknown>
+        | undefined;
+
+      const { data: tp } = await supabase
+        .from("tournament_players")
+        .select("rebuys_used, addons_used, buyback_used_as")
+        .eq("id", tournamentPlayerId)
+        .maybeSingle();
+      const tokensSpentAfter = (payload.tokens_spent_after as number | undefined) ?? 1;
+
+      const update: TablesUpdate<"tournament_players"> = {
+        busted_at_time: priorBust ? priorBust.created_at : new Date().toISOString(),
+        busted_at_level:
+          (priorBustPayload?.at_level as number | null | undefined) ?? null,
+        current_chips: 0,
+        seat_number: null,
+        finishing_position: null,
+      };
+      if (typeof tp?.rebuys_used === "number") {
+        update.rebuys_used = Math.max(0, tp.rebuys_used - 1);
+      }
+      if (tokensSpentAfter <= 1) {
+        update.buyback_used = false;
+        update.buyback_used_as = null;
+      }
+      const { error } = await supabase
+        .from("tournament_players")
+        .update(update)
+        .eq("id", tournamentPlayerId);
+      if (error) throw new Error(error.message);
+    } else if (row.type === "addon") {
+      // Addon is additive (current_chips += chips_added), so undoing it
+      // is a straight subtraction.
+      const chipsAdded = (payload.chips_added as number | undefined) ?? 0;
+      const { data: tp } = await supabase
+        .from("tournament_players")
+        .select("current_chips, addons_used")
+        .eq("id", tournamentPlayerId)
+        .maybeSingle();
+      if (!tp) throw new Error("Player slot not found.");
+      const tokensSpentAfter = (payload.tokens_spent_after as number | undefined) ?? 1;
+
+      const update: TablesUpdate<"tournament_players"> = {
+        current_chips: Math.max(0, (tp.current_chips ?? 0) - chipsAdded),
+      };
+      if (typeof tp.addons_used === "number") {
+        update.addons_used = Math.max(0, tp.addons_used - 1);
+      }
+      if (tokensSpentAfter <= 1) {
+        update.buyback_used = false;
+        update.buyback_used_as = null;
+      }
+      const { error } = await supabase
+        .from("tournament_players")
+        .update(update)
+        .eq("id", tournamentPlayerId);
+      if (error) throw new Error(error.message);
+    } else if (row.type === "chip_adjust") {
+      const before = (payload.before as number | undefined) ?? 0;
+      const { error } = await supabase
+        .from("tournament_players")
+        .update({ current_chips: before })
+        .eq("id", tournamentPlayerId);
+      if (error) throw new Error(error.message);
+    }
+
+    await supabase.from("tournament_events").insert({
+      tournament_id: tournamentId,
+      type: "undo",
+      payload: {
+        undone_event_id: eventId,
+        undone_type: row.type,
+        tournament_player_id: tournamentPlayerId,
+      },
+    });
+
+    await refresh(tournamentId);
   });
 }

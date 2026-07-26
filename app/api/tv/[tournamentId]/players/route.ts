@@ -49,14 +49,15 @@ export async function GET(
         `,
       )
       .eq("tournament_id", tournamentId),
-    // Bust events power the TV's "last segment bust outs" counter so the
-    // count survives rebuys (which clear busted_at_time on the player
-    // row). Limit is generous; the TV slices to a smaller window.
+    // Bust/rebuy/addon events power the TV's "last segment" stats (shown
+    // during breaks) so they survive rebuys (which clear busted_at_time
+    // on the player row). Limit is generous; the TV slices to a smaller
+    // window.
     supabase
       .from("tournament_events")
       .select("type, payload, created_at")
       .eq("tournament_id", tournamentId)
-      .in("type", ["bust", "break_start", "break_end"])
+      .in("type", ["bust", "rebuy", "addon", "break_start", "break_end"])
       .order("created_at", { ascending: true })
       .limit(500),
     // Approved color-up exchanges. The TV adds the sum of `net_change`

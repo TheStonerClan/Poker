@@ -155,6 +155,21 @@ export default function TvRecap({
                 playerName={playerName}
                 displayLabel={displayLabel}
                 totalPool={totalPool}
+                bounty={
+                  tournament.bounty_target_player_id
+                    ? {
+                        amount: tournament.bounty_amount ?? 20,
+                        targetName: playerName(
+                          tournament.bounty_target_player_id,
+                        ),
+                        collectedByName: tournament.bounty_collected_by_player_id
+                          ? playerName(
+                              tournament.bounty_collected_by_player_id,
+                            )
+                          : null,
+                      }
+                    : null
+                }
               />
             ),
           },
@@ -235,11 +250,17 @@ function PayoutsSlide({
   playerName,
   displayLabel,
   totalPool,
+  bounty,
 }: {
   payouts: PayoutRow[];
   playerName: (id: string | null) => string;
   displayLabel: (n: number) => string;
   totalPool: number;
+  bounty?: {
+    amount: number;
+    targetName: string;
+    collectedByName: string | null;
+  } | null;
 }) {
   return (
     <div className="flex flex-1 flex-col min-h-0">
@@ -263,6 +284,14 @@ function PayoutsSlide({
           </li>
         ))}
       </ul>
+      {bounty ? (
+        <p className="mt-2 text-center text-[clamp(0.7rem,0.9vw,0.85rem)] text-gold-bright">
+          {formatMoney(bounty.amount)} bounty{" "}
+          {bounty.collectedByName
+            ? `won by ${bounty.collectedByName}`
+            : `on ${bounty.targetName}`}
+        </p>
+      ) : null}
       <div className="mt-[clamp(0.5rem,1vh,1rem)] flex items-baseline justify-between border-t border-gold/30 pt-3">
         <span className="text-label uppercase tracking-[0.25em] text-[clamp(0.7rem,0.9vw,0.85rem)]">
           Prize pool
