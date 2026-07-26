@@ -1787,12 +1787,18 @@ const AdjustChipsSchema = z.object({
   // 10M is a generous cap — way above any realistic stack — but
   // small enough to catch a "typed an extra zero" mistake.
   newChips: z.coerce.number().int().min(0).max(10_000_000),
+  // Truly optional: the client sends `null` for a blank field (see
+  // ChipEditButton's `reason.trim() || null`), not `undefined` or `""`.
+  // The old `.optional().or(z.literal(""))` union didn't include `null`
+  // as a valid branch, so every blank-reason submission failed
+  // validation with "expected string, received null" — `.nullable()`
+  // closes that gap.
   reason: z
     .string()
     .trim()
     .max(140)
+    .nullable()
     .optional()
-    .or(z.literal(""))
     .transform((v) => (v ? v : null)),
 });
 
