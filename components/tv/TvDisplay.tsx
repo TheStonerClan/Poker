@@ -19,7 +19,6 @@ import { useDriftSync } from "@/lib/timer/useDriftSync";
 import { useLevelClock } from "@/lib/timer/useLevelClock";
 import { aggregatePlayers } from "@/lib/tv/aggregate";
 import {
-  formatLevelLabel,
   getLevel,
   getNextPlayingLevel,
   parseLevels,
@@ -460,10 +459,10 @@ export default function TvDisplay({
             />
           ) : (
             <ClockRing
-              levelLabel={
+              blindsLabel={
                 currentLevel
-                  ? formatLevelLabel(levels, currentLevel.level_num)
-                  : "L1"
+                  ? formatBlinds(currentLevel.small, currentLevel.big, currentLevel.ante)
+                  : "—"
               }
               remainingSec={clock.remainingSec}
               durationSec={durationSec}
