@@ -21,6 +21,7 @@ export function NewTournamentWizard({
   templates,
   players,
   initialTemplateId = null,
+  isSandbox = false,
 }: {
   templates: TournamentTemplate[];
   players: Player[];
@@ -32,6 +33,12 @@ export function NewTournamentWizard({
    * a recurrence-projected occurrence straight into staging.
    */
   initialTemplateId?: string | null;
+  /**
+   * When true, the created tournament is flagged `is_sandbox` and
+   * excluded from real history/leaderboards and Signal recap
+   * dispatch. Used by /sandboxadmin/tournaments/new.
+   */
+  isSandbox?: boolean;
 }) {
   // Start on the Settings step when a templateId came in via the URL
   // — otherwise the admin would land on a one-option picker just to
@@ -135,11 +142,14 @@ export function NewTournamentWizard({
           onStart={() => {
             setError(null);
             start(async () => {
-              const res = await startTournament({
-                templateId: template.id,
-                playerIds: [...picked],
-                tables,
-              });
+              const res = await startTournament(
+                {
+                  templateId: template.id,
+                  playerIds: [...picked],
+                  tables,
+                },
+                { isSandbox },
+              );
               if (res.status === "error") setError(res.message ?? "Could not start.");
             });
           }}

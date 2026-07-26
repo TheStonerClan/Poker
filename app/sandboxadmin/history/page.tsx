@@ -4,7 +4,7 @@ export const dynamic = "force-dynamic";
 
 type SearchParams = { range?: string };
 
-export default async function HistoryPage({
+export default async function SandboxHistoryPage({
   searchParams,
 }: {
   searchParams: Promise<SearchParams>;
@@ -12,9 +12,9 @@ export default async function HistoryPage({
   return (
     <HistoryBody
       searchParams={searchParams}
-      isSandbox={false}
-      basePath="/history"
-      homeHref="/"
+      isSandbox={true}
+      basePath="/sandboxadmin/history"
+      homeHref="/sandboxadmin"
     />
   );
 }

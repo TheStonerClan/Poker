@@ -24,17 +24,20 @@ export type BlindLevel = {
 
 const ACTIVE_STATUSES = ["scheduled", "running", "paused"] as const;
 
-export const getActiveTournament = cache(async (): Promise<Tournament | null> => {
-  const supabase = await createClient();
-  const { data } = await supabase
-    .from("tournaments")
-    .select("*")
-    .in("status", ACTIVE_STATUSES as unknown as string[])
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  return data ?? null;
-});
+export const getActiveTournament = cache(
+  async (opts?: { sandbox?: boolean }): Promise<Tournament | null> => {
+    const supabase = await createClient();
+    const { data } = await supabase
+      .from("tournaments")
+      .select("*")
+      .eq("is_sandbox", opts?.sandbox ?? false)
+      .in("status", ACTIVE_STATUSES as unknown as string[])
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    return data ?? null;
+  },
+);
 
 export const getTournament = cache(async (id: string): Promise<Tournament | null> => {
   const supabase = await createClient();

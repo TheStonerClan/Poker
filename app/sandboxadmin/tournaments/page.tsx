@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { TopBar } from "@/components/admin/TopBar";
+import { SandboxBadge } from "@/components/SandboxBadge";
 import { createClient } from "@/lib/supabase/server";
 import { requireAdmin } from "@/lib/auth";
 import { formatBlinds, formatMoney } from "@/lib/admin/format";
@@ -8,14 +9,20 @@ import { blindLevels, type Tournament } from "@/lib/admin/queries";
 
 export const dynamic = "force-dynamic";
 
-export default async function TournamentsListPage() {
+/**
+ * Sandbox variant of /admin/tournaments — same list UI, scoped to
+ * `is_sandbox = true` rows. Row links still go to the shared
+ * /admin/tournaments/[id] detail page (it works by id regardless of
+ * the flag and shows its own SandboxBadge).
+ */
+export default async function SandboxTournamentsListPage() {
   await requireAdmin();
   const supabase = await createClient();
 
   const { data: tournaments } = await supabase
     .from("tournaments")
     .select("*")
-    .eq("is_sandbox", false)
+    .eq("is_sandbox", true)
     .order("created_at", { ascending: false })
     .limit(40);
 
@@ -26,14 +33,17 @@ export default async function TournamentsListPage() {
   return (
     <>
       <TopBar
-        title="Tournaments"
+        title="Sandbox tournaments"
         action={
-          <Link
-            href="/admin/tournaments/new"
-            className="rounded-md bg-gold px-3 py-2 text-xs font-semibold uppercase tracking-wider text-bg"
-          >
-            New
-          </Link>
+          <div className="flex items-center gap-2">
+            <SandboxBadge />
+            <Link
+              href="/sandboxadmin/tournaments/new"
+              className="rounded-md bg-gold px-3 py-2 text-xs font-semibold uppercase tracking-wider text-bg"
+            >
+              New
+            </Link>
+          </div>
         }
       />
       <main className="flex flex-1 flex-col gap-4 px-4 py-4">
@@ -62,7 +72,7 @@ export default async function TournamentsListPage() {
           </Link>
         ) : (
           <Link
-            href="/admin/tournaments/new"
+            href="/sandboxadmin/tournaments/new"
             className="block rounded-md bg-gold px-4 py-3 text-center text-base font-semibold text-bg"
           >
             Start tournament
@@ -74,19 +84,11 @@ export default async function TournamentsListPage() {
             Recent
           </h2>
           {finished.length === 0 ? (
-            <p className="text-sm text-fg/50">No finished tournaments yet.</p>
+            <p className="text-sm text-fg/50">No finished sandbox tournaments yet.</p>
           ) : (
             <ul className="flex flex-col gap-2">
               {finished.map((t) => (
                 <li key={t.id}>
-                  {/*
-                    Wrap each row in a Link to /admin/tournaments/[id]
-                    so the admin can drill in to the Danger zone
-                    delete (or just view the finalized recap).
-                    Previously these rendered as plain text with no
-                    affordance, leaving the admin no path to delete a
-                    test tournament from the UI.
-                  */}
                   <Link
                     href={`/admin/tournaments/${t.id}`}
                     className="flex items-center gap-2 rounded-md border border-fg/10 px-3 py-2 text-sm transition hover:border-fg/25 hover:bg-fg/[0.02]"

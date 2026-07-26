@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { TopBar } from "@/components/admin/TopBar";
+import { SandboxBadge } from "@/components/SandboxBadge";
 import {
   blindLevels,
   currentLevel,
@@ -169,14 +170,20 @@ export default async function LiveTournamentPage({
       <TopBar
         title={`${curLabel} of ${totalOfKind}`}
         subtitle={`${tournament.status.toUpperCase()} · ${formatBlinds(cur)}`}
-        back={{ href: "/admin", label: "Dashboard" }}
+        back={{
+          href: tournament.is_sandbox ? "/sandboxadmin" : "/admin",
+          label: "Dashboard",
+        }}
         action={
-          <Link
-            href={`/admin/tournaments/${tournament.id}#finalize`}
-            className="rounded-md border border-fg/15 px-3 py-2 text-xs font-semibold uppercase tracking-wider text-fg/80"
-          >
-            Pool {formatMoney(payouts.effectivePool)}
-          </Link>
+          <div className="flex items-center gap-2">
+            {tournament.is_sandbox ? <SandboxBadge /> : null}
+            <Link
+              href={`/admin/tournaments/${tournament.id}#finalize`}
+              className="rounded-md border border-fg/15 px-3 py-2 text-xs font-semibold uppercase tracking-wider text-fg/80"
+            >
+              Pool {formatMoney(payouts.effectivePool)}
+            </Link>
+          </div>
         }
       />
 
