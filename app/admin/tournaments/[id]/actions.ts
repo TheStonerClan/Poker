@@ -390,6 +390,66 @@ export async function collectBounty(input: {
   });
 }
 
+const ReopenBountySchema = z.object({
+  tournamentId: z.uuid(),
+});
+
+/**
+ * Clear a mistaken bounty collection — either "wrong player, I need to
+ * fix who" (handled by just calling collectBounty again with the right
+ * id) or "this shouldn't have been marked collected at all." Reverts
+ * the bounty to open/unclaimed; the admin re-records it (or not) from
+ * there. Logged as an `undo` event referencing the most recent
+ * bounty_collected event, matching how bust/rebuy/addon/chip_adjust
+ * undos are recorded — tournament_events is append-only, so this is a
+ * compensating insert, not a mutation of the original.
+ */
+export async function reopenBounty(input: {
+  tournamentId: string;
+}): Promise<AdminActionResult> {
+  return runAdminAction(async () => {
+    await requireAdmin();
+    const { tournamentId } = ReopenBountySchema.parse(input);
+    const supabase = await createClient();
+
+    const { data: t } = await supabase
+      .from("tournaments")
+      .select("bounty_collected_by_player_id")
+      .eq("id", tournamentId)
+      .maybeSingle();
+    if (!t) throw new Error("Tournament not found");
+    if (!t.bounty_collected_by_player_id) {
+      throw new Error("The bounty isn't marked collected.");
+    }
+
+    const { data: lastCollected } = await supabase
+      .from("tournament_events")
+      .select("id")
+      .eq("tournament_id", tournamentId)
+      .eq("type", "bounty_collected")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    const { error } = await supabase
+      .from("tournaments")
+      .update({ bounty_collected_by_player_id: null })
+      .eq("id", tournamentId);
+    if (error) throw new Error(error.message);
+
+    await supabase.from("tournament_events").insert({
+      tournament_id: tournamentId,
+      type: "undo",
+      payload: {
+        undone_event_id: lastCollected?.id ?? null,
+        undone_type: "bounty_collected",
+      },
+    });
+
+    await refresh(tournamentId);
+  });
+}
+
 export async function rebuyPlayer(input: {
   tournamentPlayerId: string;
 }): Promise<AdminActionResult> {
