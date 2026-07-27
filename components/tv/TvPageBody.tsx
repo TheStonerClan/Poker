@@ -133,12 +133,15 @@ export default async function TvPageBody({
         .order("created_at", { ascending: true }),
       // Bust / rebuy / addon events power the per-player history
       // timeline on the Stats slide ("bust L4 → rebuy L5 → bust L7").
-      // Ordered ASC so each player's history reads chronologically.
+      // level_advance events let the Payouts slide's bounty line work out
+      // which blind level was in play — and how far into it — when the
+      // bounty target busted. Ordered ASC so each player's history reads
+      // chronologically.
       supabase
         .from("tournament_events")
         .select("type, payload, created_at")
         .eq("tournament_id", recapRow.id)
-        .in("type", ["bust", "rebuy", "addon"])
+        .in("type", ["bust", "rebuy", "addon", "level_advance"])
         .order("created_at", { ascending: true }),
     ]);
 

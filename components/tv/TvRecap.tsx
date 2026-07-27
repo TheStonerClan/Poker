@@ -11,7 +11,8 @@ import {
   type HistoryEntry,
 } from "@/lib/admin/player-history";
 import { TABLE_COLOR_CSS } from "@/lib/admin/tables";
-import { formatChips, formatMoney } from "@/lib/tv/format";
+import { formatBlinds, formatChips, formatMMSS, formatMoney } from "@/lib/tv/format";
+import { getLevel, parseLevels } from "@/lib/tv/levels";
 import type {
   TournamentPlayerWithName,
   TournamentRow,
@@ -104,6 +105,47 @@ export default function TvRecap({
   });
   const { biggestGain, biggestLoss } = biggestChipSwings(chipSnapshots);
 
+  // "[collector] took out [target] at [blinds], [elapsed] into the
+  // level" for the Payouts slide's bounty card. Only buildable once the
+  // bounty was actually collected — falls back to simpler text (below)
+  // when unclaimed, or when the target's bust event / level can't be
+  // pinned down for some reason.
+  const bountyStory = (() => {
+    const targetId = tournament.bounty_target_player_id;
+    const collectorId = tournament.bounty_collected_by_player_id;
+    if (!targetId || !collectorId) return null;
+
+    const targetBusts = gameEvents
+      .filter((e) => e.type === "bust" && e.payload?.player_id === targetId)
+      .sort(
+        (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+      );
+    const lastBust = targetBusts[targetBusts.length - 1];
+    const atLevel = lastBust?.payload?.at_level;
+    if (!lastBust || typeof atLevel !== "number") return null;
+
+    const levels = parseLevels(tournament.blind_structure_snapshot);
+    const level = getLevel(levels, atLevel);
+    if (!level) return null;
+
+    const levelStart = findLevelStartTime(
+      atLevel,
+      gameEvents,
+      lastBust.created_at,
+      tournament.started_at,
+    );
+    const elapsedSec = levelStart
+      ? Math.max(0, (new Date(lastBust.created_at).getTime() - levelStart.getTime()) / 1000)
+      : null;
+
+    return {
+      collectorName: playerName(collectorId),
+      targetName: playerName(targetId),
+      blindsStr: formatBlinds(level.small, level.big, level.ante),
+      elapsedStr: elapsedSec != null ? formatMMSS(elapsedSec) : null,
+    };
+  })();
+
   return (
     <div className="h-screen overflow-hidden bg-bg text-fg flex flex-col px-[clamp(1rem,3vw,3rem)] py-[clamp(0.75rem,1.5vh,2rem)]">
       <TvAutoRefresh intervalSec={60} />
@@ -167,6 +209,7 @@ export default function TvRecap({
                               tournament.bounty_collected_by_player_id,
                             )
                           : null,
+                        story: bountyStory,
                       }
                     : null
                 }
@@ -260,6 +303,12 @@ function PayoutsSlide({
     amount: number;
     targetName: string;
     collectedByName: string | null;
+    story?: {
+      collectorName: string;
+      targetName: string;
+      blindsStr: string;
+      elapsedStr: string | null;
+    } | null;
   } | null;
 }) {
   return (
@@ -288,23 +337,32 @@ function PayoutsSlide({
             {/* One position's worth of empty space separating the paid
                 positions from the bounty below. */}
             <li aria-hidden className="h-[clamp(1.75rem,3.5vh,2.75rem)]" />
-            <li className="flex items-baseline justify-between gap-4 rounded-md border-2 border-gold bg-gold/10 px-4 py-2.5">
-              <div className="flex items-baseline gap-3 min-w-0">
+            <li className="flex flex-col gap-1 rounded-md border-2 border-gold bg-gold/10 px-4 py-2.5">
+              <div className="flex items-baseline justify-between gap-4">
                 <span className="font-mono text-[clamp(1rem,1.5vw,1.4rem)] text-gold tabular-nums w-[6ch]">
                   Bounty
                 </span>
-                <span className="font-mono text-fg text-[clamp(1rem,1.6vw,1.6rem)] truncate">
-                  {bounty.collectedByName ?? bounty.targetName}
+                <span className="font-mono text-value text-[clamp(1.1rem,1.7vw,1.6rem)] tabular-nums">
+                  {formatMoney(bounty.amount)}
                 </span>
-                {!bounty.collectedByName ? (
-                  <span className="text-fg/50 text-[clamp(0.6rem,0.8vw,0.75rem)] uppercase tracking-wider whitespace-nowrap">
-                    unclaimed
-                  </span>
-                ) : null}
               </div>
-              <span className="font-mono text-value text-[clamp(1.1rem,1.7vw,1.6rem)] tabular-nums">
-                {formatMoney(bounty.amount)}
-              </span>
+              <p className="font-mono text-fg text-[clamp(0.85rem,1.15vw,1.05rem)]">
+                {bounty.story ? (
+                  <>
+                    {bounty.story.collectorName} took out {bounty.story.targetName} at{" "}
+                    {bounty.story.blindsStr}
+                    {bounty.story.elapsedStr
+                      ? `, ${bounty.story.elapsedStr} into the level`
+                      : ""}
+                  </>
+                ) : bounty.collectedByName ? (
+                  `Won by ${bounty.collectedByName}`
+                ) : (
+                  <span className="text-fg/50">
+                    Unclaimed — on {bounty.targetName}
+                  </span>
+                )}
+              </p>
             </li>
           </>
         ) : null}
@@ -529,6 +587,39 @@ function SwingCard({
       ) : null}
     </div>
   );
+}
+
+/**
+ * When did `levelNum` actually start, as of the given bust? Looks for
+ * the most recent `level_advance` event with `payload.to_level ===
+ * levelNum` at or before the bust — there can be more than one if the
+ * admin used Back/Forward, so the latest one still before the bust wins.
+ * Level 1 typically has no explicit level_advance event (the tournament
+ * just starts running at it), so that case falls back to
+ * `tournament.started_at`.
+ *
+ * Wall-clock elapsed, not adjusted for any pauses within the level —
+ * matches how an announcer would describe it ("busted 12 minutes into
+ * the level") rather than pure play-clock time.
+ */
+function findLevelStartTime(
+  levelNum: number,
+  events: readonly GameEvent[],
+  bustCreatedAt: string,
+  tournamentStartedAt: string | null,
+): Date | null {
+  const bustTime = new Date(bustCreatedAt).getTime();
+  let best: number | null = null;
+  for (const e of events) {
+    if (e.type !== "level_advance") continue;
+    const toLevel = e.payload?.to_level;
+    if (typeof toLevel !== "number" || toLevel !== levelNum) continue;
+    const t = new Date(e.created_at).getTime();
+    if (t <= bustTime && (best == null || t > best)) best = t;
+  }
+  if (best != null) return new Date(best);
+  if (levelNum === 1 && tournamentStartedAt) return new Date(tournamentStartedAt);
+  return null;
 }
 
 function ordinal(n: number): string {
