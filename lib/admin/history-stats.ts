@@ -359,7 +359,12 @@ export function buildBountyLedger(args: {
   const rows: BountyLedgerRow[] = [];
   for (const t of tournaments) {
     if (!t.bounty_target_player_id) continue;
-    const amount = t.bounty_amount ?? BASE_BOUNTY_AMOUNT;
+    // tournaments.bounty_amount is Postgres `numeric`, which comes back
+    // from the Supabase client as a string — Number(...) it here so
+    // downstream summing (bountyCollectorCounts in HistoryBody) doesn't
+    // silently string-concat instead of adding. Same guard as
+    // lib/admin/bounty.ts's resolveBounty().
+    const amount = Number(t.bounty_amount ?? BASE_BOUNTY_AMOUNT);
     rows.push({
       tournamentId: t.id,
       finishedAt: t.finished_at,
