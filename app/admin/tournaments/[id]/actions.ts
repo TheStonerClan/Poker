@@ -9,6 +9,7 @@ import { requireManagePlayerSlot } from "@/lib/auth/table-admin";
 import { BASE_BOUNTY_AMOUNT } from "@/lib/bounty";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { refreshAllPlayerImpressions } from "@/lib/admin/impressions";
 import { blindLevels } from "@/lib/admin/queries";
 import {
   computeBalanceMoves,
@@ -1183,6 +1184,21 @@ async function performFinalize(
       // and the finalize itself is irreversibly committed.
       console.error("recap dispatch failed", err);
     }
+  }
+
+  // Refresh every player's AI-generated "post-tournament impression"
+  // (shown on their /history/[player] profile). Same isolation as the
+  // Signal dispatch above — a Claude API hiccup or missing key must
+  // never unwind or delay the finalize itself. Runs for sandbox too
+  // (unlike the recap), since that's the safe place to try the feature
+  // out without touching the real league's blurbs.
+  try {
+    await refreshAllPlayerImpressions({
+      isSandbox: t.is_sandbox,
+      sourceTournamentId: tournamentId,
+    });
+  } catch (err) {
+    console.error("player impression refresh failed", err);
   }
 }
 
