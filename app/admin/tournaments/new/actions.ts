@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { requireAdmin } from "@/lib/auth";
-import { resolveBountyTarget } from "@/lib/admin/bounty";
+import { resolveBounty } from "@/lib/admin/bounty";
 import { createClient } from "@/lib/supabase/server";
 import {
   randomizeAssignments,
@@ -233,17 +233,20 @@ export async function startTournament(
     return { status: "error", message: tpErr.message };
   }
 
-  // Resolve the bounty target once, now that the roster is settled. Best-
-  // effort: a lookup failure here shouldn't block starting the tournament,
-  // it just means no bounty shows tonight.
-  const bountyTargetPlayerId = await resolveBountyTarget({
+  // Resolve the bounty (target + stacked amount) once, now that the
+  // roster is settled. Best-effort: a lookup failure here shouldn't
+  // block starting the tournament, it just means no bounty shows tonight.
+  const bounty = await resolveBounty({
     isSandbox,
     rosterPlayerIds: playerIds,
   }).catch(() => null);
-  if (bountyTargetPlayerId) {
+  if (bounty) {
     await supabase
       .from("tournaments")
-      .update({ bounty_target_player_id: bountyTargetPlayerId })
+      .update({
+        bounty_target_player_id: bounty.targetPlayerId,
+        bounty_amount: bounty.amount,
+      })
       .eq("id", tournament.id);
   }
 
