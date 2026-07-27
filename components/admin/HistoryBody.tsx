@@ -476,8 +476,9 @@ export default async function HistoryBody({
       {!hasEnoughBreakShiftData ? (
         <section className="rounded-md border border-dashed border-fg/15 p-4 text-center text-xs text-fg/55">
           Break-shift analytics need at least {MIN_BREAK_SHIFT_PLAYERS}{" "}
-          players reporting chip snapshots from the /play view during a
-          break. Not enough data in this window yet.
+          players with a chip count logged at a table (check-in panel on
+          /table) or self-reported at /play. Not enough data in this
+          window yet.
         </section>
       ) : (
         <section className="grid grid-cols-1 gap-3 sm:grid-cols-3">
