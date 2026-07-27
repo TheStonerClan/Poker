@@ -504,37 +504,39 @@ export default async function PlayerHistoryBody({
               </h2>
               <ul className="flex flex-col gap-2">
                 {history.map((h) => (
-                  <li
-                    key={h.tournamentId}
-                    className="block rounded-md border border-fg/10 px-3 py-3"
-                  >
-                    <div className="flex items-baseline justify-between gap-2">
-                      <p className="text-sm font-semibold text-fg">
-                        <LocalDateTime iso={h.finishedAt} />
-                      </p>
-                      <p className="font-mono text-xs tabular-nums text-fg">
-                        {h.position != null
-                          ? ordinal(h.position)
-                          : h.bustedAtLevel != null
-                            ? `Out L${h.bustedAtLevel}`
-                            : "—"}
-                      </p>
-                    </div>
-                    <div className="mt-1 flex items-baseline justify-between gap-2 text-xs text-fg/60">
-                      <p className="font-mono tabular-nums">
-                        {h.rebuys} rebuy{h.rebuys === 1 ? "" : "s"} ·{" "}
-                        {h.addOns} add-on{h.addOns === 1 ? "" : "s"} ·{" "}
-                        {formatMoney(h.buyIn)} buy-in
-                      </p>
-                      <p
-                        className={`font-mono tabular-nums font-semibold ${
-                          h.net >= 0 ? "text-success" : "text-danger"
-                        }`}
-                      >
-                        {h.net >= 0 ? "+" : ""}
-                        {formatMoney(h.net)}
-                      </p>
-                    </div>
+                  <li key={h.tournamentId}>
+                    <Link
+                      href={`${listBasePath}/tournament/${h.tournamentId}`}
+                      className="block rounded-md border border-fg/10 px-3 py-3 hover:border-gold/40"
+                    >
+                      <div className="flex items-baseline justify-between gap-2">
+                        <p className="text-sm font-semibold text-fg">
+                          <LocalDateTime iso={h.finishedAt} />
+                        </p>
+                        <p className="font-mono text-xs tabular-nums text-fg">
+                          {h.position != null
+                            ? ordinal(h.position)
+                            : h.bustedAtLevel != null
+                              ? `Out L${h.bustedAtLevel}`
+                              : "—"}
+                        </p>
+                      </div>
+                      <div className="mt-1 flex items-baseline justify-between gap-2 text-xs text-fg/60">
+                        <p className="font-mono tabular-nums">
+                          {h.rebuys} rebuy{h.rebuys === 1 ? "" : "s"} ·{" "}
+                          {h.addOns} add-on{h.addOns === 1 ? "" : "s"} ·{" "}
+                          {formatMoney(h.buyIn)} buy-in
+                        </p>
+                        <p
+                          className={`font-mono tabular-nums font-semibold ${
+                            h.net >= 0 ? "text-success" : "text-danger"
+                          }`}
+                        >
+                          {h.net >= 0 ? "+" : ""}
+                          {formatMoney(h.net)}
+                        </p>
+                      </div>
+                    </Link>
                   </li>
                 ))}
               </ul>

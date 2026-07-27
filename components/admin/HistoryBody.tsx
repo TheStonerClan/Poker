@@ -581,49 +581,40 @@ export default async function HistoryBody({
         </h2>
         <ul className="flex flex-col gap-2">
           {summaries.map((t) => (
-            <li
-              key={t.id}
-              className="block rounded-md border border-fg/10 px-3 py-3"
-            >
-              <div className="flex items-baseline justify-between gap-2">
-                <p className="text-sm font-semibold text-fg">
-                  <LocalDateTime iso={t.finishedAt} />
-                </p>
-                <p className="font-mono text-xs tabular-nums text-fg/70">
-                  {formatMoney(t.prizePool)} pool
-                  {t.buyIn > 0 ? (
-                    <span className="ml-2 text-fg/40">
-                      · {formatMoney(t.buyIn)} buy-in
-                    </span>
-                  ) : null}
-                </p>
-              </div>
-              <div className="mt-1 flex items-baseline justify-between gap-2 text-xs text-fg/60">
-                <p>
-                  {t.winnerName && t.winnerId ? (
-                    <>
-                      Winner:{" "}
-                      <PlayerLink
-                        basePath={basePath}
-                        playerId={t.winnerId}
-                        name={t.winnerName}
-                      />
-                    </>
-                  ) : (
-                    "—"
-                  )}
-                  {t.chopped ? (
-                    <span className="ml-1.5 rounded-full border border-gold/50 px-1.5 py-px text-[9px] uppercase tracking-wider text-gold/80">
-                      chop
-                    </span>
-                  ) : null}
-                </p>
-                <p className="font-mono tabular-nums">
-                  {t.entries} entries · {t.rebuys} rebuy
-                  {t.rebuys === 1 ? "" : "s"} · {t.addOns} add-on
-                  {t.addOns === 1 ? "" : "s"}
-                </p>
-              </div>
+            <li key={t.id}>
+              <Link
+                href={`${basePath}/tournament/${t.id}`}
+                className="block rounded-md border border-fg/10 px-3 py-3 hover:border-gold/40"
+              >
+                <div className="flex items-baseline justify-between gap-2">
+                  <p className="text-sm font-semibold text-fg">
+                    <LocalDateTime iso={t.finishedAt} />
+                  </p>
+                  <p className="font-mono text-xs tabular-nums text-fg/70">
+                    {formatMoney(t.prizePool)} pool
+                    {t.buyIn > 0 ? (
+                      <span className="ml-2 text-fg/40">
+                        · {formatMoney(t.buyIn)} buy-in
+                      </span>
+                    ) : null}
+                  </p>
+                </div>
+                <div className="mt-1 flex items-baseline justify-between gap-2 text-xs text-fg/60">
+                  <p>
+                    {t.winnerName ? `Winner: ${t.winnerName}` : "—"}
+                    {t.chopped ? (
+                      <span className="ml-1.5 rounded-full border border-gold/50 px-1.5 py-px text-[9px] uppercase tracking-wider text-gold/80">
+                        chop
+                      </span>
+                    ) : null}
+                  </p>
+                  <p className="font-mono tabular-nums">
+                    {t.entries} entries · {t.rebuys} rebuy
+                    {t.rebuys === 1 ? "" : "s"} · {t.addOns} add-on
+                    {t.addOns === 1 ? "" : "s"}
+                  </p>
+                </div>
+              </Link>
             </li>
           ))}
         </ul>
