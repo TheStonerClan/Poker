@@ -7,6 +7,7 @@ import {
   buildBountyLedger,
   buildPlayerStats,
   buildPlayerTournamentHistory,
+  type ChipSnapshotEvent,
   type FinishedTournament,
   type PayoutRow,
   type RosterRow,
@@ -22,6 +23,8 @@ const SYSTEM_PROMPT = `You write extremely short "post-tournament impression" bl
 You will receive a JSON array of players, each with verified stats and recent tournament history pulled straight from the league's database. For each player, write ONE blurb (2 sentences max, under ~50 words) using ONLY the facts given in that player's own data — never invent, estimate, or embellish a specific number, date, level, or event that isn't present. A warm, lightly playful recap-writer tone is good; unverifiable claims about mindset, feelings, or intent are not.
 
 If a player has very little data (0-1 recorded tournaments), keep the blurb brief and don't overstate what one data point means.
+
+Some tournaments in a player's recentHistory include a "chipCheckpoints" list — their reported chip count at specific levels that night, in order. When present, you may describe their stack trajectory (e.g., built an early lead before fading, or ground up from a short stack) using only those exact chip counts and levels. Most tournaments won't have this — never imply a trajectory for one that doesn't.
 
 Respond with ONLY a JSON array, no markdown fences, no commentary, one entry per player in the input, same order:
 [{"playerId": "...", "impression": "..."}, ...]`;
@@ -46,6 +49,14 @@ type PlayerFacts = {
     rebuys: number;
     addOns: number;
     net: number;
+    /**
+     * Chip count at each level a snapshot exists for that night, in
+     * order — omitted entirely when none exist. Comes from the same
+     * chip_snapshot events the /history break-shift stats use, so an
+     * admin's "Chips" edit or the /table check-in panel counts the
+     * same as a player's own /play self-report.
+     */
+    chipCheckpoints?: Array<{ levelNum: number; chips: number }>;
   }>;
   bounties: Array<{
     amount: number;
@@ -107,6 +118,7 @@ export async function refreshAllPlayerImpressions(args: {
     { data: payoutsData },
     { data: rebuyData },
     { data: addOnData },
+    { data: snapshotData },
   ] = await Promise.all([
     supabase
       .from("tournament_players")
@@ -126,6 +138,11 @@ export async function refreshAllPlayerImpressions(args: {
       .select("tournament_id, payload, created_at")
       .in("tournament_id", tournamentIds)
       .eq("type", "addon"),
+    supabase
+      .from("tournament_events")
+      .select("tournament_id, payload, created_at")
+      .in("tournament_id", tournamentIds)
+      .eq("type", "chip_snapshot"),
   ]);
 
   const roster = (rosterData ?? []) as unknown as RosterRow[];
@@ -133,6 +150,34 @@ export async function refreshAllPlayerImpressions(args: {
   const payouts = (payoutsData ?? []) as PayoutRow[];
   const rebuyEvents = (rebuyData ?? []) as TokenEvent[];
   const addOnEvents = (addOnData ?? []) as TokenEvent[];
+  const snapshotEvents = (snapshotData ?? []) as ChipSnapshotEvent[];
+
+  // (tournamentId, playerId) -> chip checkpoints, sorted by level. Same
+  // raw shape /history's break-shift stats read from — reused here as
+  // literal chip-count-at-level facts rather than a derived ratio, so
+  // the model only ever sees numbers that actually happened.
+  const checkpointsByKey = new Map<
+    string,
+    Array<{ levelNum: number; chips: number }>
+  >();
+  for (const e of snapshotEvents) {
+    const p = e.payload as {
+      player_id?: unknown;
+      level_num?: unknown;
+      chips?: unknown;
+    } | null;
+    const pid = typeof p?.player_id === "string" ? p.player_id : null;
+    const levelNum = typeof p?.level_num === "number" ? p.level_num : null;
+    const chips = typeof p?.chips === "number" ? p.chips : null;
+    if (!pid || levelNum == null || chips == null) continue;
+    const key = `${e.tournament_id}:${pid}`;
+    const arr = checkpointsByKey.get(key) ?? [];
+    arr.push({ levelNum, chips });
+    checkpointsByKey.set(key, arr);
+  }
+  for (const arr of checkpointsByKey.values()) {
+    arr.sort((a, b) => a.levelNum - b.levelNum);
+  }
 
   const playerStats = buildPlayerStats({
     tournaments,
@@ -186,14 +231,22 @@ export async function refreshAllPlayerImpressions(args: {
       rebuyRate: stats.rebuyRate,
       totalRebuys: stats.totalRebuys,
       totalAddOns: stats.totalAddOns,
-      recentHistory: history.map((h) => ({
-        finishedAt: h.finishedAt,
-        position: h.position,
-        bustedAtLevel: h.bustedAtLevel,
-        rebuys: h.rebuys,
-        addOns: h.addOns,
-        net: h.net,
-      })),
+      recentHistory: history.map((h) => {
+        const checkpoints = checkpointsByKey.get(
+          `${h.tournamentId}:${stats.playerId}`,
+        );
+        return {
+          finishedAt: h.finishedAt,
+          position: h.position,
+          bustedAtLevel: h.bustedAtLevel,
+          rebuys: h.rebuys,
+          addOns: h.addOns,
+          net: h.net,
+          ...(checkpoints && checkpoints.length > 0
+            ? { chipCheckpoints: checkpoints }
+            : {}),
+        };
+      }),
       bounties,
     };
   });
