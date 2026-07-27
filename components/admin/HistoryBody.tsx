@@ -283,10 +283,10 @@ export default async function HistoryBody({
   const hasEnoughBreakShiftData =
     eligibleForRatio.length >= MIN_BREAK_SHIFT_PLAYERS;
   const consistentlyAbove = [...eligibleForRatio]
-    .sort((a, b) => b.avgChipsRatio - a.avgChipsRatio)
+    .sort((a, b) => b.maxChipsRatio - a.maxChipsRatio)
     .slice(0, 5);
   const consistentlyBelow = [...eligibleForRatio]
-    .sort((a, b) => a.avgChipsRatio - b.avgChipsRatio)
+    .sort((a, b) => a.minChipsRatio - b.minChipsRatio)
     .slice(0, 5);
   const biggestSwingers = [...breakShifts]
     .filter((b) => b.biggestSwing > 0)
@@ -520,21 +520,21 @@ export default async function HistoryBody({
           <CohortList
             basePath={basePath}
             title="Above average"
-            subtitle="Highest avg chip ratio at breaks"
+            subtitle="Their biggest lead over the table average"
             rows={consistentlyAbove.map((b) => ({
               id: b.playerId,
               name: b.name,
-              value: `${b.avgChipsRatio.toFixed(2)}× · ${b.snapshotCount}`,
+              value: `${b.maxChipsRatio.toFixed(2)}× · ${b.tournamentsAboveAverage} tournament${b.tournamentsAboveAverage === 1 ? "" : "s"}`,
             }))}
           />
           <CohortList
             basePath={basePath}
             title="Below average"
-            subtitle="Lowest avg chip ratio at breaks"
+            subtitle="Their biggest deficit vs. the table average"
             rows={consistentlyBelow.map((b) => ({
               id: b.playerId,
               name: b.name,
-              value: `${b.avgChipsRatio.toFixed(2)}× · ${b.snapshotCount}`,
+              value: `${b.minChipsRatio.toFixed(2)}× · ${b.tournamentsBelowAverage} tournament${b.tournamentsBelowAverage === 1 ? "" : "s"}`,
             }))}
           />
           <CohortList
@@ -581,49 +581,40 @@ export default async function HistoryBody({
         </h2>
         <ul className="flex flex-col gap-2">
           {summaries.map((t) => (
-            <li
-              key={t.id}
-              className="block rounded-md border border-fg/10 px-3 py-3"
-            >
-              <div className="flex items-baseline justify-between gap-2">
-                <p className="text-sm font-semibold text-fg">
-                  <LocalDateTime iso={t.finishedAt} />
-                </p>
-                <p className="font-mono text-xs tabular-nums text-fg/70">
-                  {formatMoney(t.prizePool)} pool
-                  {t.buyIn > 0 ? (
-                    <span className="ml-2 text-fg/40">
-                      · {formatMoney(t.buyIn)} buy-in
-                    </span>
-                  ) : null}
-                </p>
-              </div>
-              <div className="mt-1 flex items-baseline justify-between gap-2 text-xs text-fg/60">
-                <p>
-                  {t.winnerName && t.winnerId ? (
-                    <>
-                      Winner:{" "}
-                      <PlayerLink
-                        basePath={basePath}
-                        playerId={t.winnerId}
-                        name={t.winnerName}
-                      />
-                    </>
-                  ) : (
-                    "—"
-                  )}
-                  {t.chopped ? (
-                    <span className="ml-1.5 rounded-full border border-gold/50 px-1.5 py-px text-[9px] uppercase tracking-wider text-gold/80">
-                      chop
-                    </span>
-                  ) : null}
-                </p>
-                <p className="font-mono tabular-nums">
-                  {t.entries} entries · {t.rebuys} rebuy
-                  {t.rebuys === 1 ? "" : "s"} · {t.addOns} add-on
-                  {t.addOns === 1 ? "" : "s"}
-                </p>
-              </div>
+            <li key={t.id}>
+              <Link
+                href={`${basePath}/tournament/${t.id}`}
+                className="block rounded-md border border-fg/10 px-3 py-3 hover:border-gold/40"
+              >
+                <div className="flex items-baseline justify-between gap-2">
+                  <p className="text-sm font-semibold text-fg">
+                    <LocalDateTime iso={t.finishedAt} />
+                  </p>
+                  <p className="font-mono text-xs tabular-nums text-fg/70">
+                    {formatMoney(t.prizePool)} pool
+                    {t.buyIn > 0 ? (
+                      <span className="ml-2 text-fg/40">
+                        · {formatMoney(t.buyIn)} buy-in
+                      </span>
+                    ) : null}
+                  </p>
+                </div>
+                <div className="mt-1 flex items-baseline justify-between gap-2 text-xs text-fg/60">
+                  <p>
+                    {t.winnerName ? `Winner: ${t.winnerName}` : "—"}
+                    {t.chopped ? (
+                      <span className="ml-1.5 rounded-full border border-gold/50 px-1.5 py-px text-[9px] uppercase tracking-wider text-gold/80">
+                        chop
+                      </span>
+                    ) : null}
+                  </p>
+                  <p className="font-mono tabular-nums">
+                    {t.entries} entries · {t.rebuys} rebuy
+                    {t.rebuys === 1 ? "" : "s"} · {t.addOns} add-on
+                    {t.addOns === 1 ? "" : "s"}
+                  </p>
+                </div>
+              </Link>
             </li>
           ))}
         </ul>

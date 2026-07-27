@@ -9,10 +9,12 @@ import { BASE_BOUNTY_AMOUNT } from "@/lib/bounty";
 import { formatMoney } from "@/lib/admin/format";
 import {
   applyHistoryRange,
+  buildBreakShiftStats,
   buildPlayerStats,
   buildPlayerTournamentHistory,
   isHistoryRange,
   rangeLabel,
+  type ChipSnapshotEvent,
   type FinishedTournament,
   type HistoryRange,
   type PayoutRow,
@@ -25,8 +27,19 @@ import { ordinal } from "@/lib/tv/prize";
 import { createServiceClient } from "@/lib/supabase/service";
 
 const TOURNAMENT_LIMIT = 60;
+// Same threshold HistoryBody's Above/Below-average cards use — below
+// this, "best" and "worst" can collapse to the same single check-in.
+const MIN_CHIP_CHECKINS = 2;
 
 type SearchParams = { range?: string };
+
+type PlayerChipStats = {
+  avgRatio: number;
+  maxRatio: number;
+  minRatio: number;
+  tournamentsAbove: number;
+  tournamentsBelow: number;
+};
 
 type PlayerBountyRow = {
   tournamentId: string;
@@ -50,6 +63,7 @@ type PlayerProfile = {
   history: PlayerTournamentRow[];
   bounties: PlayerBountyRow[];
   impression: PlayerImpression | null;
+  chipStats: PlayerChipStats | null;
 };
 
 async function loadPlayerProfile(args: {
@@ -98,6 +112,7 @@ async function loadPlayerProfile(args: {
       history: [],
       bounties: [],
       impression,
+      chipStats: null,
     };
   }
 
@@ -126,28 +141,41 @@ async function loadPlayerProfile(args: {
       history: [],
       bounties: [],
       impression,
+      chipStats: null,
     };
   }
 
   const playedIds = roster.map((r) => r.tournament_id);
-  const [{ data: payoutsData }, { data: rebuyData }, { data: addOnData }] =
-    await Promise.all([
-      supabase
-        .from("prize_distributions")
-        .select("tournament_id, position, amount, player_id, is_chopped")
-        .eq("player_id", playerId)
-        .in("tournament_id", playedIds),
-      supabase
-        .from("tournament_events")
-        .select("tournament_id, payload, created_at")
-        .eq("type", "rebuy")
-        .in("tournament_id", playedIds),
-      supabase
-        .from("tournament_events")
-        .select("tournament_id, payload, created_at")
-        .eq("type", "addon")
-        .in("tournament_id", playedIds),
-    ]);
+  const [
+    { data: payoutsData },
+    { data: rebuyData },
+    { data: addOnData },
+    { data: snapshotData },
+  ] = await Promise.all([
+    supabase
+      .from("prize_distributions")
+      .select("tournament_id, position, amount, player_id, is_chopped")
+      .eq("player_id", playerId)
+      .in("tournament_id", playedIds),
+    supabase
+      .from("tournament_events")
+      .select("tournament_id, payload, created_at")
+      .eq("type", "rebuy")
+      .in("tournament_id", playedIds),
+    supabase
+      .from("tournament_events")
+      .select("tournament_id, payload, created_at")
+      .eq("type", "addon")
+      .in("tournament_id", playedIds),
+    // NOT scoped to this player — buildBreakShiftStats needs every
+    // player's check-ins at these tournaments to compute an accurate
+    // "chips vs. table average" for this one player.
+    supabase
+      .from("tournament_events")
+      .select("tournament_id, payload, created_at")
+      .eq("type", "chip_snapshot")
+      .in("tournament_id", playedIds),
+  ]);
 
   const payouts = (payoutsData ?? []) as PayoutRow[];
   // Events store player_id inside the JSON payload, not as a column.
@@ -171,6 +199,23 @@ async function loadPlayerProfile(args: {
   });
   const stats = allStats.find((s) => s.playerId === playerId) ?? null;
   const history = buildPlayerTournamentHistory({ tournaments, roster, payouts });
+
+  const snapshotEvents = (snapshotData ?? []) as ChipSnapshotEvent[];
+  const myBreakShift = buildBreakShiftStats({
+    tournaments,
+    roster,
+    events: snapshotEvents,
+  }).find((b) => b.playerId === playerId);
+  const chipStats: PlayerChipStats | null =
+    myBreakShift && myBreakShift.snapshotCount >= MIN_CHIP_CHECKINS
+      ? {
+          avgRatio: myBreakShift.avgChipsRatio,
+          maxRatio: myBreakShift.maxChipsRatio,
+          minRatio: myBreakShift.minChipsRatio,
+          tournamentsAbove: myBreakShift.tournamentsAboveAverage,
+          tournamentsBelow: myBreakShift.tournamentsBelowAverage,
+        }
+      : null;
 
   // Bounty involvement within this range — tournaments where the
   // player was either the target or the collector. Roster here only
@@ -244,6 +289,7 @@ async function loadPlayerProfile(args: {
     history,
     bounties,
     impression,
+    chipStats,
   };
 }
 
@@ -274,7 +320,7 @@ export default async function PlayerHistoryBody({
   if (!profile) notFound();
 
   const ownPath = `${listBasePath}/${playerId}`;
-  const { stats, history, bounties, impression } = profile;
+  const { stats, history, bounties, impression, chipStats } = profile;
 
   return (
     <main className="flex min-h-screen flex-col bg-bg text-fg">
@@ -379,6 +425,28 @@ export default async function PlayerHistoryBody({
               </dl>
             </section>
 
+            {chipStats ? (
+              <section className="rounded-md border border-fg/10 p-4">
+                <h2 className="text-label mb-3 text-[11px] font-semibold uppercase tracking-[0.25em]">
+                  Chip check-ins
+                </h2>
+                <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-sm">
+                  <StatRow
+                    label="Best above average"
+                    value={`${chipStats.maxRatio.toFixed(2)}× · ${chipStats.tournamentsAbove} tournament${chipStats.tournamentsAbove === 1 ? "" : "s"}`}
+                  />
+                  <StatRow
+                    label="Worst below average"
+                    value={`${chipStats.minRatio.toFixed(2)}× · ${chipStats.tournamentsBelow} tournament${chipStats.tournamentsBelow === 1 ? "" : "s"}`}
+                  />
+                  <StatRow
+                    label="Blended avg (all breaks)"
+                    value={`${chipStats.avgRatio.toFixed(2)}×`}
+                  />
+                </dl>
+              </section>
+            ) : null}
+
             {bounties.length > 0 ? (
               <section className="rounded-md border border-fg/10 p-4">
                 <h2 className="text-label mb-3 text-[11px] font-semibold uppercase tracking-[0.25em]">
@@ -436,37 +504,39 @@ export default async function PlayerHistoryBody({
               </h2>
               <ul className="flex flex-col gap-2">
                 {history.map((h) => (
-                  <li
-                    key={h.tournamentId}
-                    className="block rounded-md border border-fg/10 px-3 py-3"
-                  >
-                    <div className="flex items-baseline justify-between gap-2">
-                      <p className="text-sm font-semibold text-fg">
-                        <LocalDateTime iso={h.finishedAt} />
-                      </p>
-                      <p className="font-mono text-xs tabular-nums text-fg">
-                        {h.position != null
-                          ? ordinal(h.position)
-                          : h.bustedAtLevel != null
-                            ? `Out L${h.bustedAtLevel}`
-                            : "—"}
-                      </p>
-                    </div>
-                    <div className="mt-1 flex items-baseline justify-between gap-2 text-xs text-fg/60">
-                      <p className="font-mono tabular-nums">
-                        {h.rebuys} rebuy{h.rebuys === 1 ? "" : "s"} ·{" "}
-                        {h.addOns} add-on{h.addOns === 1 ? "" : "s"} ·{" "}
-                        {formatMoney(h.buyIn)} buy-in
-                      </p>
-                      <p
-                        className={`font-mono tabular-nums font-semibold ${
-                          h.net >= 0 ? "text-success" : "text-danger"
-                        }`}
-                      >
-                        {h.net >= 0 ? "+" : ""}
-                        {formatMoney(h.net)}
-                      </p>
-                    </div>
+                  <li key={h.tournamentId}>
+                    <Link
+                      href={`${listBasePath}/tournament/${h.tournamentId}`}
+                      className="block rounded-md border border-fg/10 px-3 py-3 hover:border-gold/40"
+                    >
+                      <div className="flex items-baseline justify-between gap-2">
+                        <p className="text-sm font-semibold text-fg">
+                          <LocalDateTime iso={h.finishedAt} />
+                        </p>
+                        <p className="font-mono text-xs tabular-nums text-fg">
+                          {h.position != null
+                            ? ordinal(h.position)
+                            : h.bustedAtLevel != null
+                              ? `Out L${h.bustedAtLevel}`
+                              : "—"}
+                        </p>
+                      </div>
+                      <div className="mt-1 flex items-baseline justify-between gap-2 text-xs text-fg/60">
+                        <p className="font-mono tabular-nums">
+                          {h.rebuys} rebuy{h.rebuys === 1 ? "" : "s"} ·{" "}
+                          {h.addOns} add-on{h.addOns === 1 ? "" : "s"} ·{" "}
+                          {formatMoney(h.buyIn)} buy-in
+                        </p>
+                        <p
+                          className={`font-mono tabular-nums font-semibold ${
+                            h.net >= 0 ? "text-success" : "text-danger"
+                          }`}
+                        >
+                          {h.net >= 0 ? "+" : ""}
+                          {formatMoney(h.net)}
+                        </p>
+                      </div>
+                    </Link>
                   </li>
                 ))}
               </ul>

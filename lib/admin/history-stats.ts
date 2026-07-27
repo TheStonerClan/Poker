@@ -751,6 +751,15 @@ export type PlayerTournamentRow = {
   addOns: number;
   bustedAtLevel: number | null;
   net: number;
+  /**
+   * Whose row this is. Redundant when the caller already scoped
+   * `roster` to one known player (the player profile page's use case),
+   * but load-bearing when `roster` instead spans every player in one
+   * tournament (the tournament detail page's use case) — same function,
+   * different scoping by the caller.
+   */
+  playerId: string | null;
+  playerName: string;
 };
 
 /**
@@ -766,12 +775,16 @@ export function buildPlayerTournamentHistory(args: {
   payouts: PayoutRow[];
 }): PlayerTournamentRow[] {
   const tournamentById = new Map(args.tournaments.map((t) => [t.id, t]));
-  const payoutByTournament = new Map<string, number>();
+  // Keyed by (tournament, player) — not just tournament — so this stays
+  // correct whether `payouts` is pre-scoped to one player (the player
+  // profile page) or spans everyone in one tournament (the tournament
+  // detail page). Keying by tournament alone would sum every player's
+  // payout onto every row once more than one player is present.
+  const payoutByKey = new Map<string, number>();
   for (const p of args.payouts) {
-    payoutByTournament.set(
-      p.tournament_id,
-      (payoutByTournament.get(p.tournament_id) ?? 0) + p.amount,
-    );
+    if (!p.player_id) continue;
+    const key = `${p.tournament_id}:${p.player_id}`;
+    payoutByKey.set(key, (payoutByKey.get(key) ?? 0) + p.amount);
   }
 
   const rows: PlayerTournamentRow[] = [];
@@ -780,7 +793,9 @@ export function buildPlayerTournamentHistory(args: {
     if (!t) continue;
     const counts = tokenCounts(r);
     const basis = tournamentCostBasis(t);
-    const payout = payoutByTournament.get(r.tournament_id) ?? 0;
+    const payout = r.player_id
+      ? (payoutByKey.get(`${r.tournament_id}:${r.player_id}`) ?? 0)
+      : 0;
     const cost =
       t.buy_in_snapshot +
       counts.rebuys * basis.rebuyPrice +
@@ -795,6 +810,8 @@ export function buildPlayerTournamentHistory(args: {
       addOns: counts.addOns,
       bustedAtLevel: r.busted_at_level,
       net: payout - cost,
+      playerId: r.player_id,
+      playerName: r.player?.name ?? "—",
     });
   }
 
@@ -865,6 +882,14 @@ export type BreakShiftRow = {
    * the player has in the window.
    */
   avgChipsRatio: number;
+  /** Their single highest chips-vs-table-average ratio ever recorded. */
+  maxChipsRatio: number;
+  /** Their single lowest chips-vs-table-average ratio ever recorded. */
+  minChipsRatio: number;
+  /** Distinct tournaments where at least one check-in ratio was > 1. */
+  tournamentsAboveAverage: number;
+  /** Distinct tournaments where at least one check-in ratio was < 1. */
+  tournamentsBelowAverage: number;
   /**
    * Largest single between-break swing in chips for this player.
    * Computed as max |chips_after - chips_before| for any consecutive
@@ -937,6 +962,10 @@ export function buildBreakShiftStats(args: {
   for (const [playerId, perTournament] of byPlayer.entries()) {
     let ratioSum = 0;
     let ratioCount = 0;
+    let maxRatio = -Infinity;
+    let minRatio = Infinity;
+    const tournamentsAbove = new Set<string>();
+    const tournamentsBelow = new Set<string>();
     let biggestSwing = 0;
     let swingRatioSum = 0;
     let swingRatioCount = 0;
@@ -950,8 +979,13 @@ export function buildBreakShiftStats(args: {
         const mean =
           meansByTournamentLevel.get(`${s.tournamentId}:${s.level}`) ?? s.chips;
         if (mean > 0) {
-          ratioSum += s.chips / mean;
+          const ratio = s.chips / mean;
+          ratioSum += ratio;
           ratioCount += 1;
+          if (ratio > maxRatio) maxRatio = ratio;
+          if (ratio < minRatio) minRatio = ratio;
+          if (ratio > 1) tournamentsAbove.add(s.tournamentId);
+          if (ratio < 1) tournamentsBelow.add(s.tournamentId);
         }
         if (i > 0) {
           const prev = arr[i - 1];
@@ -978,6 +1012,10 @@ export function buildBreakShiftStats(args: {
       name: nameByPlayer.get(playerId) ?? "—",
       snapshotCount: ratioCount,
       avgChipsRatio: ratioCount > 0 ? ratioSum / ratioCount : 1,
+      maxChipsRatio: ratioCount > 0 ? maxRatio : 1,
+      minChipsRatio: ratioCount > 0 ? minRatio : 1,
+      tournamentsAboveAverage: tournamentsAbove.size,
+      tournamentsBelowAverage: tournamentsBelow.size,
       biggestSwing,
       avgSwingRatio:
         swingRatioCount > 0 ? swingRatioSum / swingRatioCount : null,
