@@ -135,15 +135,32 @@ export default async function TvPageBody({
       // timeline on the Stats slide ("bust L4 → rebuy L5 → bust L7").
       // level_advance events let the Payouts slide's bounty line work out
       // which blind level was in play — and how far into it — when the
-      // bounty target busted. Ordered ASC so each player's history reads
-      // chronologically.
+      // bounty target busted. `undo` events are also pulled (and filtered
+      // out below, same as the live break screen in TvDisplay.tsx) so an
+      // admin's undo of a mistaken bust/rebuy/addon doesn't leave a
+      // phantom entry in the permanent recap. Ordered ASC so each
+      // player's history reads chronologically.
       supabase
         .from("tournament_events")
-        .select("type, payload, created_at")
+        .select("id, type, payload, created_at")
         .eq("tournament_id", recapRow.id)
-        .in("type", ["bust", "rebuy", "addon", "level_advance"])
+        .in("type", ["bust", "rebuy", "addon", "level_advance", "undo"])
         .order("created_at", { ascending: true }),
     ]);
+
+    const recapUndoneEventIds = new Set(
+      (recapGameEvents ?? [])
+        .filter((e) => e.type === "undo")
+        .map(
+          (e) =>
+            (e.payload as Record<string, unknown> | null)
+              ?.undone_event_id as string | undefined,
+        )
+        .filter((id): id is string => typeof id === "string"),
+    );
+    const filteredRecapGameEvents = (recapGameEvents ?? []).filter(
+      (e) => e.type !== "undo" && !recapUndoneEventIds.has(e.id),
+    );
 
     return (
       <SandboxOverlay isSandbox={isSandbox}>
@@ -159,7 +176,7 @@ export default async function TvPageBody({
             }>
           }
           gameEvents={
-            (recapGameEvents ?? []) as Array<{
+            filteredRecapGameEvents as Array<{
               type: string;
               payload: Record<string, unknown> | null;
               created_at: string;
