@@ -115,7 +115,7 @@ export default async function TvPageBody({
       supabase
         .from("tournament_players")
         .select(
-          "id, player_id, current_chips, buyback_used, buyback_used_as, busted_at_level, busted_at_time, finishing_position, payout_amount, players(id, name)",
+          "id, player_id, current_chips, buyback_used, buyback_used_as, busted_at_level, busted_at_time, finishing_position, payout_amount, players!tournament_players_player_id_fkey(id, name)",
         )
         .eq("tournament_id", recapRow.id),
       supabase
@@ -203,7 +203,7 @@ export default async function TvPageBody({
   if (tournamentRow.status === "scheduled") {
     const { data: pregamePlayers } = await supabase
       .from("tournament_players")
-      .select("*, players(id, name)")
+      .select("*, players!tournament_players_player_id_fkey(id, name)")
       .eq("tournament_id", tournamentRow.id)
       .order("table_number", { ascending: true, nullsFirst: false })
       .order("seat_number", { ascending: true, nullsFirst: false });

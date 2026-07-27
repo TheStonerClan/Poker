@@ -37,7 +37,7 @@ export default async function PlayEntryPage({ params }: PlayPageProps) {
   const { data: rosterRows } = await supabase
     .from("tournament_players")
     .select(
-      "id, player_id, current_chips, busted_at_time, players(name)",
+      "id, player_id, current_chips, busted_at_time, players!tournament_players_player_id_fkey(name)",
     )
     .eq("tournament_id", sessionId);
 

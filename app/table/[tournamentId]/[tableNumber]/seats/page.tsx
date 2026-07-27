@@ -66,7 +66,7 @@ export default async function SeatEditorPage({
   const { data: rosterRaw } = await supabase
     .from("tournament_players")
     .select(
-      "id, seat_number, table_number, busted_at_time, seat_confirmed_at, player:players(id, name)",
+      "id, seat_number, table_number, busted_at_time, seat_confirmed_at, player:players!tournament_players_player_id_fkey(id, name)",
     )
     .eq("tournament_id", tournamentId)
     .eq("table_number", tableNumber)

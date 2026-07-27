@@ -59,7 +59,7 @@ export async function getTournamentRoster(
   const supabase = await createClient();
   const { data } = await supabase
     .from("tournament_players")
-    .select("*, player:players(id, name, signal_handle)")
+    .select("*, player:players!tournament_players_player_id_fkey(id, name, signal_handle)")
     .eq("tournament_id", tournamentId)
     .order("seat_number", { ascending: true, nullsFirst: false });
   return (data ?? []) as TournamentRosterRow[];

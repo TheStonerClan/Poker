@@ -91,7 +91,7 @@ export default async function TableAdminPage({
   const [rosterRes, pendingColorUpsRes, snapshotEventsRes] = await Promise.all([
     supabase
       .from("tournament_players")
-      .select("*, player:players(id, name, signal_handle)")
+      .select("*, player:players!tournament_players_player_id_fkey(id, name, signal_handle)")
       .eq("tournament_id", tournamentId)
       .order("seat_number", { ascending: true, nullsFirst: false }),
     supabase
@@ -114,6 +114,14 @@ export default async function TableAdminPage({
 
   const snapshotEvents = (snapshotEventsRes.data ?? []) as ChipSnapshotEvent[];
   const latestSnapshotByPlayer = latestChipSnapshotPerPlayer(snapshotEvents);
+
+  // Whole-roster name lookup — a player's knockout can be credited to
+  // someone who's since moved to another table, so this can't be
+  // scoped to just atTable.
+  const nameByPlayerId = new Map<string, string>();
+  for (const r of roster) {
+    if (r.player_id && r.player?.name) nameByPlayerId.set(r.player_id, r.player.name);
+  }
 
   // Scope to this table. Busted players with their last seat on this
   // table also belong here so their "Out · Lx" tile shows in the same
@@ -309,6 +317,12 @@ export default async function TableAdminPage({
               currentLevel={tournament.current_level}
               buybackConfig={buybackCfg}
               scope={ctx.isGlobalAdmin ? "admin" : "table"}
+              knockoutCandidates={atTable
+                .filter((r) => r.player_id)
+                .map((r) => ({
+                  playerId: r.player_id as string,
+                  name: r.player?.name ?? "—",
+                }))}
               rows={out.map((r) => ({
                 id: r.id,
                 name: r.player?.name ?? "—",
@@ -317,6 +331,11 @@ export default async function TableAdminPage({
                 bustedAtLevel: r.busted_at_level,
                 buybackUsed: r.buyback_used,
                 buybackUsedAs: r.buyback_used_as,
+                playerId: r.player_id,
+                knockedOutByPlayerId: r.knocked_out_by_player_id,
+                knockedOutByName: r.knocked_out_by_player_id
+                  ? (nameByPlayerId.get(r.knocked_out_by_player_id) ?? null)
+                  : null,
                 latestSnapshot: r.player_id
                   ? (latestSnapshotByPlayer.get(r.player_id) ?? null)
                   : null,

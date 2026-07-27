@@ -59,7 +59,7 @@ async function loadTournamentDetail(args: {
     await Promise.all([
       supabase
         .from("tournament_players")
-        .select("*, player:players(id, name)")
+        .select("*, player:players!tournament_players_player_id_fkey(id, name)")
         .eq("tournament_id", tournamentId),
       supabase
         .from("prize_distributions")

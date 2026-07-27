@@ -118,6 +118,26 @@ export function PerPlayerStatsTable({ rows, levelLabels, basePath }: Props) {
         </span>
       ),
     },
+    {
+      key: "knockouts",
+      label: "KOs",
+      align: "right",
+      sortKey: (r) => r.knockouts,
+      render: (r) => (
+        <span className="font-mono tabular-nums text-fg/70">{r.knockouts}</span>
+      ),
+    },
+    {
+      key: "koRatio",
+      label: "KO ratio",
+      align: "right",
+      sortKey: (r) => r.koRatio,
+      render: (r) => (
+        <span className="font-mono tabular-nums text-fg/70">
+          {r.koRatio.toFixed(2)}
+        </span>
+      ),
+    },
   ];
 
   return (
