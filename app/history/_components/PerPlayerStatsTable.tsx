@@ -2,6 +2,7 @@
 
 import type { PlayerStatsRow } from "@/lib/admin/history-stats";
 
+import { PlayerLink } from "./PlayerLink";
 import { SortableTable, type ColumnDef } from "./SortableTable";
 
 type Props = {
@@ -18,6 +19,8 @@ type Props = {
    * the raw number is opaque; the user explicitly asked for blinds.
    */
   levelLabels?: Record<number, string>;
+  /** History list path ("/history" or "/sandboxadmin/history") — names link to `${basePath}/[player]`. */
+  basePath: string;
 };
 
 /**
@@ -32,7 +35,7 @@ type Props = {
  * player whose avg bust is L4.2 most commonly busts during the L4
  * blinds.
  */
-export function PerPlayerStatsTable({ rows, levelLabels }: Props) {
+export function PerPlayerStatsTable({ rows, levelLabels, basePath }: Props) {
   function blindLabel(avg: number | null): string {
     if (avg == null) return "—";
     if (levelLabels) {
@@ -50,8 +53,8 @@ export function PerPlayerStatsTable({ rows, levelLabels }: Props) {
       align: "left",
       sortKey: (r) => r.name.toLowerCase(),
       render: (r) => (
-        <span className="font-semibold text-fg">
-          {r.name}
+        <span>
+          <PlayerLink basePath={basePath} playerId={r.playerId} name={r.name} />
           <span className="ml-2 text-[10px] uppercase tracking-widest text-fg/40">
             {r.tournamentsPlayed} pl
           </span>

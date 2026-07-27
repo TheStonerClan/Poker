@@ -3,12 +3,15 @@
 import { formatMoney } from "@/lib/admin/format";
 import type { PlayerStatsRow } from "@/lib/admin/history-stats";
 
+import { PlayerLink } from "./PlayerLink";
 import { SortableTable, type ColumnDef } from "./SortableTable";
 
 type Props = {
   rows: PlayerStatsRow[];
   /** Cap visible rows. Defaults to 15. */
   maxRows?: number;
+  /** History list path ("/history" or "/sandboxadmin/history") — names link to `${basePath}/[player]`. */
+  basePath: string;
 };
 
 /**
@@ -16,7 +19,7 @@ type Props = {
  * Defaults to sorting by points; admin can re-sort by wins, ITM,
  * gross, or net with a header tap.
  */
-export function SeasonLeaderboardTable({ rows, maxRows = 15 }: Props) {
+export function SeasonLeaderboardTable({ rows, maxRows = 15, basePath }: Props) {
   const columns: ColumnDef<PlayerStatsRow, string>[] = [
     {
       key: "name",
@@ -24,7 +27,9 @@ export function SeasonLeaderboardTable({ rows, maxRows = 15 }: Props) {
       align: "left",
       sortable: true,
       sortKey: (r) => r.name.toLowerCase(),
-      render: (r) => <span className="font-semibold text-fg">{r.name}</span>,
+      render: (r) => (
+        <PlayerLink basePath={basePath} playerId={r.playerId} name={r.name} />
+      ),
     },
     {
       key: "played",

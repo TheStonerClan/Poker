@@ -28,6 +28,7 @@ import {
 import { createServiceClient } from "@/lib/supabase/service";
 
 import { PerPlayerStatsTable } from "@/app/history/_components/PerPlayerStatsTable";
+import { PlayerLink } from "@/app/history/_components/PlayerLink";
 import { SeasonLeaderboardTable } from "@/app/history/_components/SeasonLeaderboardTable";
 
 // Cap the upstream window at 60 finished tournaments. With ~10 players
@@ -220,6 +221,9 @@ export default async function HistoryBody({
     events: snapshotEvents,
   });
   const bountyLedger = buildBountyLedger({ tournaments, roster });
+  const BOUNTY_LEDGER_MAX = 3;
+  const bountyLedgerVisible = bountyLedger.slice(0, BOUNTY_LEDGER_MAX);
+  const bountyLedgerHiddenCount = bountyLedger.length - bountyLedgerVisible.length;
 
   // Headline counts.
   const totalEntries = roster.length;
@@ -320,7 +324,11 @@ export default async function HistoryBody({
             Tap a header to re-sort
           </span>
         </div>
-        <SeasonLeaderboardTable rows={playerStats} maxRows={15} />
+        <SeasonLeaderboardTable
+          rows={playerStats}
+          maxRows={15}
+          basePath={basePath}
+        />
         <PointsLegend />
       </section>
 
@@ -343,7 +351,11 @@ export default async function HistoryBody({
                   <span className="font-mono w-6 tabular-nums text-fg/55 text-xs">
                     {i + 1}
                   </span>
-                  <span className="font-semibold text-fg">{row.name}</span>
+                  <PlayerLink
+                    basePath={basePath}
+                    playerId={row.playerId}
+                    name={row.name}
+                  />
                 </div>
                 <div className="flex items-baseline gap-3 font-mono text-xs tabular-nums text-fg/55">
                   <span>
@@ -382,7 +394,7 @@ export default async function HistoryBody({
                     <span className="font-mono w-6 tabular-nums text-fg/55 text-xs">
                       {i + 1}
                     </span>
-                    <span className="font-semibold text-fg">{h.name}</span>
+                    <PlayerLink basePath={basePath} playerId={h.id} name={h.name} />
                   </div>
                   <div className="flex items-baseline gap-3 font-mono text-xs tabular-nums text-fg/55">
                     <span>
@@ -397,7 +409,7 @@ export default async function HistoryBody({
             </ol>
           ) : null}
           <ul className="flex flex-col gap-1.5 border-t border-fg/10 pt-2">
-            {bountyLedger.map((b) => (
+            {bountyLedgerVisible.map((b) => (
               <li
                 key={b.tournamentId}
                 className="flex items-baseline justify-between gap-2 px-2 py-1 text-xs"
@@ -407,16 +419,35 @@ export default async function HistoryBody({
                   {b.isStacked ? (
                     <span className="ml-1 text-gold/80">stacked</span>
                   ) : null}{" "}
-                  on <span className="font-semibold text-fg">{b.targetName}</span>
+                  on{" "}
+                  <PlayerLink
+                    basePath={basePath}
+                    playerId={b.targetPlayerId}
+                    name={b.targetName}
+                  />
                 </span>
                 <span className="font-mono tabular-nums text-fg/70">
-                  {b.collectorName
-                    ? `collected by ${b.collectorName}`
-                    : "unclaimed"}
+                  {b.collectorName && b.collectorPlayerId ? (
+                    <>
+                      collected by{" "}
+                      <PlayerLink
+                        basePath={basePath}
+                        playerId={b.collectorPlayerId}
+                        name={b.collectorName}
+                      />
+                    </>
+                  ) : (
+                    "unclaimed"
+                  )}
                 </span>
               </li>
             ))}
           </ul>
+          {bountyLedgerHiddenCount > 0 ? (
+            <p className="mt-2 text-[10px] uppercase tracking-widest text-fg/40">
+              +{bountyLedgerHiddenCount} more
+            </p>
+          ) : null}
         </section>
       ) : null}
 
@@ -434,12 +465,14 @@ export default async function HistoryBody({
         <PerPlayerStatsTable
           rows={playerStats}
           levelLabels={levelLabelRecord}
+          basePath={basePath}
         />
       </section>
 
       {/* Rebuy + addon cohorts — three short ranked lists. */}
       <section className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <CohortList
+          basePath={basePath}
           title="Always rebuys"
           subtitle="Highest rebuy rate (≥2 played)"
           rows={alwaysRebuys.map((p) => ({
@@ -449,6 +482,7 @@ export default async function HistoryBody({
           }))}
         />
         <CohortList
+          basePath={basePath}
           title="Rarely rebuys"
           subtitle="Lowest rebuy rate (≥2 played)"
           rows={rarelyRebuys.map((p) => ({
@@ -458,6 +492,7 @@ export default async function HistoryBody({
           }))}
         />
         <CohortList
+          basePath={basePath}
           title="Add-on kings"
           subtitle="Most add-ons taken"
           rows={addOnLeaders.map((p) => ({
@@ -483,6 +518,7 @@ export default async function HistoryBody({
       ) : (
         <section className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <CohortList
+            basePath={basePath}
             title="Above average"
             subtitle="Highest avg chip ratio at breaks"
             rows={consistentlyAbove.map((b) => ({
@@ -492,6 +528,7 @@ export default async function HistoryBody({
             }))}
           />
           <CohortList
+            basePath={basePath}
             title="Below average"
             subtitle="Lowest avg chip ratio at breaks"
             rows={consistentlyBelow.map((b) => ({
@@ -501,6 +538,7 @@ export default async function HistoryBody({
             }))}
           />
           <CohortList
+            basePath={basePath}
             title="Biggest swings"
             subtitle="Largest single between-break swing"
             rows={biggestSwingers.map((b) => ({
@@ -562,7 +600,18 @@ export default async function HistoryBody({
               </div>
               <div className="mt-1 flex items-baseline justify-between gap-2 text-xs text-fg/60">
                 <p>
-                  {t.winnerName ? `Winner: ${t.winnerName}` : "—"}
+                  {t.winnerName && t.winnerId ? (
+                    <>
+                      Winner:{" "}
+                      <PlayerLink
+                        basePath={basePath}
+                        playerId={t.winnerId}
+                        name={t.winnerName}
+                      />
+                    </>
+                  ) : (
+                    "—"
+                  )}
                   {t.chopped ? (
                     <span className="ml-1.5 rounded-full border border-gold/50 px-1.5 py-px text-[9px] uppercase tracking-wider text-gold/80">
                       chop
@@ -626,7 +675,7 @@ function PageShell({
   );
 }
 
-function RangeFilter({
+export function RangeFilter({
   active,
   basePath,
 }: {
@@ -657,7 +706,7 @@ function RangeFilter({
   );
 }
 
-function Headline({ label, value }: { label: string; value: string }) {
+export function Headline({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-md border border-fg/10 px-3 py-2.5">
       <p className="text-[10px] font-semibold uppercase tracking-widest text-fg/55">
@@ -698,10 +747,12 @@ function PointsLegend() {
 }
 
 function CohortList({
+  basePath,
   title,
   subtitle,
   rows,
 }: {
+  basePath: string;
   title: string;
   subtitle: string;
   rows: Array<{ id: string; name: string; value: string }>;
@@ -725,7 +776,7 @@ function CohortList({
                 <span className="font-mono w-5 tabular-nums text-fg/40 text-xs">
                   {i + 1}
                 </span>
-                <span className="font-semibold text-fg">{r.name}</span>
+                <PlayerLink basePath={basePath} playerId={r.id} name={r.name} />
               </div>
               <span className="font-mono text-xs tabular-nums text-fg/70">
                 {r.value}
