@@ -19,6 +19,7 @@ import {
 } from "@/lib/admin/chip-snapshots";
 import { formatAuditDescription, type AuditLogEntry } from "@/lib/admin/audit-log";
 import { formatBlinds, formatChips, formatMoney } from "@/lib/admin/format";
+import { BASE_BOUNTY_AMOUNT } from "@/lib/bounty";
 import { createClient } from "@/lib/supabase/server";
 import { formatLevelLabel, levelCounts } from "@/lib/tv/levels";
 import { computePayouts } from "prize-math";
@@ -185,15 +186,15 @@ export default async function LiveTournamentPage({
     0,
   );
 
-  // Bounty deduction mirrors performFinalize()'s: a flat dollar amount
-  // expressed as rakePerEntry so this projection matches what actually
-  // gets paid out at finalize.
+  // Bounty deduction mirrors performFinalize()'s: only BASE_BOUNTY_AMOUNT
+  // ever comes out of a single tournament's pool, even when
+  // tournament.bounty_amount (the total a busting player collects) is
+  // larger from stacking — the stacked portion was already deducted
+  // from a prior tournament's pool. Expressed as rakePerEntry so this
+  // projection matches what actually gets paid out at finalize.
   const bountyEntries = roster.length + buybacks;
   const bountyDeduction = tournament.bounty_target_player_id
-    ? Math.min(
-        tournament.bounty_amount ?? 0,
-        bountyEntries * tournament.buy_in_snapshot,
-      )
+    ? Math.min(BASE_BOUNTY_AMOUNT, bountyEntries * tournament.buy_in_snapshot)
     : 0;
   const bountyRakePerEntry =
     bountyEntries > 0 ? bountyDeduction / bountyEntries : 0;

@@ -6,6 +6,7 @@ import { z } from "zod";
 
 import { requireAdmin } from "@/lib/auth";
 import { requireManagePlayerSlot } from "@/lib/auth/table-admin";
+import { BASE_BOUNTY_AMOUNT } from "@/lib/bounty";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { blindLevels } from "@/lib/admin/queries";
@@ -1057,14 +1058,17 @@ async function performFinalize(
     0,
   );
 
-  // Bounty deduction: prize-math's Pool has no flat side-pot hook, only a
-  // per-entry rake, so a flat $20 is expressed as rakePerEntry = amount /
+  // Bounty deduction: only BASE_BOUNTY_AMOUNT ever comes out of a single
+  // tournament's pool, even when t.bounty_amount (the total a busting
+  // player collects) is larger from stacking — the stacked portion was
+  // already deducted from a prior tournament's pool and just carries
+  // over. prize-math's Pool has no flat side-pot hook, only a per-entry
+  // rake, so the flat amount is expressed as rakePerEntry = amount /
   // entries — entries * (amount / entries) nets out to exactly `amount`
-  // off the top, matching the live TV estimate in TvDisplay.tsx which
-  // applies the same $20 before computing payouts.
+  // off the top, matching the live TV estimate in TvDisplay.tsx.
   const entries = players.length + buybacks;
   const bountyDeduction = t.bounty_target_player_id
-    ? Math.min(t.bounty_amount ?? 0, entries * t.buy_in_snapshot)
+    ? Math.min(BASE_BOUNTY_AMOUNT, entries * t.buy_in_snapshot)
     : 0;
   const rakePerEntry = entries > 0 ? bountyDeduction / entries : 0;
 
