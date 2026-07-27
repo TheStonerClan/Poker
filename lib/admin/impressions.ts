@@ -122,7 +122,7 @@ export async function refreshAllPlayerImpressions(args: {
   ] = await Promise.all([
     supabase
       .from("tournament_players")
-      .select("*, player:players(id, name)")
+      .select("*, player:players!tournament_players_player_id_fkey(id, name)")
       .in("tournament_id", tournamentIds),
     supabase
       .from("prize_distributions")

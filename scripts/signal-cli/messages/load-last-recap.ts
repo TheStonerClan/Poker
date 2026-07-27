@@ -110,7 +110,7 @@ export async function loadRecapForTournament(
       .from('tournament_players')
       .select(
         `id, finishing_position, busted_at_time, busted_at_level,
-         player_id, player:players ( name )`,
+         player_id, player:players!tournament_players_player_id_fkey ( name )`,
       )
       .eq('tournament_id', tournamentId),
     sb

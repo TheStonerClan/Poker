@@ -314,6 +314,101 @@ export async function bustPlayer(input: {
   });
 }
 
+const RecordKnockoutSchema = z.object({
+  tournamentPlayerId: z.uuid(),
+  knockedOutByPlayerId: z.uuid(),
+});
+
+/**
+ * Record who busted a player. Same actor gate as bustPlayer itself
+ * (admin, or the table admin for that player's table) — this is
+ * correcting/completing the bust, not a financial action like the
+ * bounty collector. Change-of-mind just calls this again; there's no
+ * separate "already recorded" guard, matching collectBounty.
+ */
+export async function recordKnockout(input: {
+  tournamentPlayerId: string;
+  knockedOutByPlayerId: string;
+}): Promise<AdminActionResult> {
+  return runAdminAction(async () => {
+    const { tournamentPlayerId, knockedOutByPlayerId } =
+      RecordKnockoutSchema.parse(input);
+    const slot = await requireManagePlayerSlot(tournamentPlayerId);
+    if (!slot.busted_at_time) {
+      throw new Error("Can only record a knockout for a busted player.");
+    }
+    if (slot.player_id && slot.player_id === knockedOutByPlayerId) {
+      throw new Error("A player can't knock themselves out.");
+    }
+    const supabase = createServiceClient();
+
+    const { data: knocker } = await supabase
+      .from("tournament_players")
+      .select("id")
+      .eq("tournament_id", slot.tournament_id)
+      .eq("player_id", knockedOutByPlayerId)
+      .maybeSingle();
+    if (!knocker) throw new Error("That player isn't in this tournament.");
+
+    const { error } = await supabase
+      .from("tournament_players")
+      .update({ knocked_out_by_player_id: knockedOutByPlayerId })
+      .eq("id", tournamentPlayerId);
+    if (error) throw new Error(error.message);
+
+    await supabase.from("tournament_events").insert({
+      tournament_id: slot.tournament_id,
+      type: "knockout",
+      payload: {
+        tournament_player_id: tournamentPlayerId,
+        player_id: slot.player_id,
+        knocked_out_by_player_id: knockedOutByPlayerId,
+      },
+    });
+
+    await refresh(slot.tournament_id);
+  });
+}
+
+const ClearKnockoutSchema = z.object({
+  tournamentPlayerId: z.uuid(),
+});
+
+/**
+ * Revert a mistaken knockout attribution back to unrecorded. Logged as
+ * its own `knockout` event (with a null knocked_out_by_player_id) so
+ * undoEvent's rebuy branch, which looks back through this log for
+ * "what was true at that point in time," sees the clear rather than
+ * resurrecting a since-corrected attribution.
+ */
+export async function clearKnockout(input: {
+  tournamentPlayerId: string;
+}): Promise<AdminActionResult> {
+  return runAdminAction(async () => {
+    const { tournamentPlayerId } = ClearKnockoutSchema.parse(input);
+    const slot = await requireManagePlayerSlot(tournamentPlayerId);
+    const supabase = createServiceClient();
+
+    const { error } = await supabase
+      .from("tournament_players")
+      .update({ knocked_out_by_player_id: null })
+      .eq("id", tournamentPlayerId);
+    if (error) throw new Error(error.message);
+
+    await supabase.from("tournament_events").insert({
+      tournament_id: slot.tournament_id,
+      type: "knockout",
+      payload: {
+        tournament_player_id: tournamentPlayerId,
+        player_id: slot.player_id,
+        knocked_out_by_player_id: null,
+      },
+    });
+
+    await refresh(slot.tournament_id);
+  });
+}
+
 export type AdminActionResult = { ok: true } | { ok: false; error: string };
 
 /**
@@ -584,6 +679,11 @@ export async function rebuyPlayer(input: {
       // Player is back in play; clear their bust-time finishing_position
       // so the unique index doesn't reject the next bust.
       finishing_position: null,
+      // The elimination this was attributed to no longer stands — a
+      // fresh bust (if any) gets its own attribution. undoEvent's rebuy
+      // branch restores this from the knockout event log when the rebuy
+      // itself is undone.
+      knocked_out_by_player_id: null,
       current_chips: chips,
     };
     if (chosenSeat != null) {
@@ -2060,6 +2160,9 @@ export async function undoEvent(input: {
           table_number: tableNumber,
           seat_number: seatNumber,
           finishing_position: null,
+          // Player's back in — whatever knockout was attributed to this
+          // bust no longer stands.
+          knocked_out_by_player_id: null,
         })
         .eq("id", tournamentPlayerId);
       if (error) throw new Error(error.message);
@@ -2134,6 +2237,24 @@ export async function undoEvent(input: {
         | Record<string, unknown>
         | undefined;
 
+      // Whatever knockout attribution stood at the moment of the
+      // preceding bust — including a later clear (knocked_out_by_player_id:
+      // null) — since the live column was already wiped by the rebuy
+      // itself and can't tell us that anymore.
+      const { data: priorKnockout } = await supabase
+        .from("tournament_events")
+        .select("payload")
+        .eq("tournament_id", tournamentId)
+        .eq("type", "knockout")
+        .contains("payload", { tournament_player_id: tournamentPlayerId })
+        .lt("created_at", row.created_at)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      const priorKnockoutPayload = priorKnockout?.payload as
+        | Record<string, unknown>
+        | undefined;
+
       const { data: tp } = await supabase
         .from("tournament_players")
         .select("rebuys_used, addons_used, buyback_used_as")
@@ -2148,6 +2269,11 @@ export async function undoEvent(input: {
         current_chips: 0,
         seat_number: null,
         finishing_position: null,
+        knocked_out_by_player_id:
+          (priorKnockoutPayload?.knocked_out_by_player_id as
+            | string
+            | null
+            | undefined) ?? null,
       };
       if (typeof tp?.rebuys_used === "number") {
         update.rebuys_used = Math.max(0, tp.rebuys_used - 1);

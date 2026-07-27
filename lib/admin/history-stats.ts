@@ -70,6 +70,14 @@ export type RosterRow = {
   /** Per-row add-on counter; same 0003 caveat as `rebuys_used`. */
   addons_used?: number | null;
   busted_at_level: number | null;
+  /**
+   * Who busted this player, if recorded (0017). Source of truth for
+   * knockout leaderboards and per-player KO totals — live state, kept
+   * current across changes/clears, unlike the append-only `knockout`
+   * event log (which exists purely so an undo can rewind to a specific
+   * point in time).
+   */
+  knocked_out_by_player_id?: string | null;
   player: { id: string; name: string } | null;
 };
 
@@ -383,6 +391,58 @@ export function buildBountyLedger(args: {
   return rows;
 }
 
+// ─── Knockout ledger ────────────────────────────────────────────────────────
+
+export type KnockoutLedgerRow = {
+  tournamentId: string;
+  finishedAt: string | null;
+  victimPlayerId: string;
+  victimName: string;
+  knockerPlayerId: string;
+  knockerName: string;
+};
+
+/**
+ * One row per busted roster row with a recorded `knocked_out_by_player_id`
+ * — reads the live column (roster), not the `knockout` event log, so a
+ * later "Change" or "Clear" always shows the current, corrected
+ * attribution rather than every historical edit. Mirrors buildBountyLedger's
+ * shape and name-resolution approach.
+ */
+export function buildKnockoutLedger(args: {
+  tournaments: FinishedTournament[];
+  roster: RosterRow[];
+}): KnockoutLedgerRow[] {
+  const { tournaments, roster } = args;
+
+  const nameByPlayer = new Map<string, string>();
+  for (const r of roster) {
+    if (r.player_id && r.player?.name) nameByPlayer.set(r.player_id, r.player.name);
+  }
+  const finishedAtByTournament = new Map(
+    tournaments.map((t) => [t.id, t.finished_at]),
+  );
+
+  const rows: KnockoutLedgerRow[] = [];
+  for (const r of roster) {
+    if (!r.knocked_out_by_player_id || !r.player_id) continue;
+    rows.push({
+      tournamentId: r.tournament_id,
+      finishedAt: finishedAtByTournament.get(r.tournament_id) ?? null,
+      victimPlayerId: r.player_id,
+      victimName: nameByPlayer.get(r.player_id) ?? "—",
+      knockerPlayerId: r.knocked_out_by_player_id,
+      knockerName: nameByPlayer.get(r.knocked_out_by_player_id) ?? "—",
+    });
+  }
+  rows.sort((a, b) => {
+    const at = a.finishedAt ? Date.parse(a.finishedAt) : 0;
+    const bt = b.finishedAt ? Date.parse(b.finishedAt) : 0;
+    return bt - at;
+  });
+  return rows;
+}
+
 function groupBy<T, K>(items: T[], key: (item: T) => K): Map<K, T[]> {
   const out = new Map<K, T[]>();
   for (const item of items) {
@@ -560,6 +620,17 @@ export type PlayerStatsRow = {
   rebuyRate: number;
   /** Average finishing position (lower is better). `null` if no recorded position. */
   avgFinish: number | null;
+  /** Total players this player is credited with busting, across the window. */
+  knockouts: number;
+  /**
+   * Paid entries across the window: one per tournament played, plus
+   * every rebuy and add-on (each is its own paid entry into that
+   * night's pool). Always >= tournamentsPlayed since a played
+   * tournament without any buybacks still counts as 1.
+   */
+  totalEntries: number;
+  /** knockouts / totalEntries. 0 when totalEntries is 0 (shouldn't happen — see totalEntries). */
+  koRatio: number;
 };
 
 export function buildPlayerStats(args: {
@@ -602,6 +673,7 @@ export function buildPlayerStats(args: {
     totalRebuys: number;
     totalAddOns: number;
     finishingPositions: number[];
+    knockouts: number;
   };
   const byPlayer = new Map<string, Acc>();
   const ensure = (id: string, name: string): Acc => {
@@ -621,6 +693,7 @@ export function buildPlayerStats(args: {
         totalRebuys: 0,
         totalAddOns: 0,
         finishingPositions: [],
+        knockouts: 0,
       };
       byPlayer.set(id, acc);
     }
@@ -653,6 +726,16 @@ export function buildPlayerStats(args: {
     acc.totalRebuys += counts.rebuys;
     acc.totalAddOns += counts.addOns;
     if (counts.rebuys > 0) acc.tournamentsWithRebuy.add(r.tournament_id);
+  }
+
+  // Knockout credit — a second pass so every player's Acc already
+  // exists (the credited knocker is always someone in rosterInWindow,
+  // but not necessarily processed yet in array order above).
+  for (const r of rosterInWindow) {
+    if (!r.knocked_out_by_player_id) continue;
+    const acc = byPlayer.get(r.knocked_out_by_player_id);
+    if (!acc) continue;
+    acc.knockouts += 1;
   }
 
   for (const p of payoutsInWindow) {
@@ -701,6 +784,13 @@ export function buildPlayerStats(args: {
         ? acc.finishingPositions.reduce((s, n) => s + n, 0) /
           acc.finishingPositions.length
         : null;
+    // Paid entries: one per played tournament (win or lose) plus every
+    // rebuy and add-on — each of those is its own paid entry into that
+    // night's pool, matching how `bountyEntries` counts entries
+    // elsewhere. Always >= 1 for any player in this map (they only get
+    // an Acc by having played something).
+    const totalEntries = tournamentsPlayed + acc.totalRebuys + acc.totalAddOns;
+    const koRatio = totalEntries > 0 ? acc.knockouts / totalEntries : 0;
     rows.push({
       playerId,
       name: acc.name,
@@ -717,6 +807,9 @@ export function buildPlayerStats(args: {
       totalAddOns: acc.totalAddOns,
       rebuyRate,
       avgFinish,
+      knockouts: acc.knockouts,
+      totalEntries,
+      koRatio,
     });
   }
 
@@ -760,6 +853,16 @@ export type PlayerTournamentRow = {
    */
   playerId: string | null;
   playerName: string;
+  knockedOutByPlayerId: string | null;
+  /**
+   * Resolved from whatever `roster` the caller passed in — correct
+   * whenever `roster` spans the whole tournament (tournament detail
+   * page), but may be null even when `knockedOutByPlayerId` is set when
+   * `roster` is scoped to just one player (the player profile page's
+   * use case), since the knocker's own row isn't in that scoped set.
+   * That caller resolves the name itself from a separate lookup.
+   */
+  knockedOutByName: string | null;
 };
 
 /**
@@ -785,6 +888,12 @@ export function buildPlayerTournamentHistory(args: {
     if (!p.player_id) continue;
     const key = `${p.tournament_id}:${p.player_id}`;
     payoutByKey.set(key, (payoutByKey.get(key) ?? 0) + p.amount);
+  }
+  // Best-effort knocker-name resolution — only correct when `roster`
+  // spans the whole tournament (see the type's doc comment).
+  const nameByPlayer = new Map<string, string>();
+  for (const r of args.roster) {
+    if (r.player_id && r.player?.name) nameByPlayer.set(r.player_id, r.player.name);
   }
 
   const rows: PlayerTournamentRow[] = [];
@@ -812,6 +921,10 @@ export function buildPlayerTournamentHistory(args: {
       net: payout - cost,
       playerId: r.player_id,
       playerName: r.player?.name ?? "—",
+      knockedOutByPlayerId: r.knocked_out_by_player_id ?? null,
+      knockedOutByName: r.knocked_out_by_player_id
+        ? (nameByPlayer.get(r.knocked_out_by_player_id) ?? null)
+        : null,
     });
   }
 

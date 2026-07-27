@@ -49,6 +49,22 @@ export function TournamentRosterTable({ rows, basePath }: Props) {
       ),
     },
     {
+      key: "knockedOutBy",
+      label: "KO'd by",
+      align: "left",
+      sortKey: (r) => r.knockedOutByName?.toLowerCase() ?? null,
+      render: (r) =>
+        r.knockedOutByPlayerId && r.knockedOutByName ? (
+          <PlayerLink
+            basePath={basePath}
+            playerId={r.knockedOutByPlayerId}
+            name={r.knockedOutByName}
+          />
+        ) : (
+          <span className="text-fg/40">—</span>
+        ),
+    },
+    {
       key: "payout",
       label: "Payout",
       align: "right",

@@ -569,6 +569,7 @@ export type Database = {
           current_chips: number
           finishing_position: number | null
           id: string
+          knocked_out_by_player_id: string | null
           payout_amount: number | null
           player_id: string
           rebuys_used: number
@@ -592,6 +593,7 @@ export type Database = {
           current_chips?: number
           finishing_position?: number | null
           id?: string
+          knocked_out_by_player_id?: string | null
           payout_amount?: number | null
           player_id: string
           rebuys_used?: number
@@ -615,6 +617,7 @@ export type Database = {
           current_chips?: number
           finishing_position?: number | null
           id?: string
+          knocked_out_by_player_id?: string | null
           payout_amount?: number | null
           player_id?: string
           rebuys_used?: number

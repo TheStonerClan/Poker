@@ -42,7 +42,7 @@ export default async function PlayerHomePage({ params }: Props) {
   const { data: rosterRows } = await supabase
     .from("tournament_players")
     .select(
-      "id, player_id, current_chips, busted_at_time, busted_at_level, finishing_position, payout_amount, buyback_used, buyback_used_as, players(name)",
+      "id, player_id, current_chips, busted_at_time, busted_at_level, finishing_position, payout_amount, buyback_used, buyback_used_as, players!tournament_players_player_id_fkey(name)",
     )
     .eq("tournament_id", sessionId);
 
@@ -217,7 +217,7 @@ async function loadPlayerHistory(
   // Just THIS player's rows; saves pulling everyone else's history.
   const { data: rosterData } = await supabase
     .from("tournament_players")
-    .select("*, player:players(id, name)")
+    .select("*, player:players!tournament_players_player_id_fkey(id, name)")
     .eq("player_id", playerId)
     .in("tournament_id", tournamentIds);
   const roster = (rosterData ?? []) as unknown as RosterRow[];

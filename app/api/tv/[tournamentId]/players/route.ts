@@ -45,7 +45,7 @@ export async function GET(
           updated_at,
           rebuys_used,
           addons_used,
-          players ( id, name )
+          players!tournament_players_player_id_fkey ( id, name )
         `,
       )
       .eq("tournament_id", tournamentId),

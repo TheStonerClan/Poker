@@ -103,6 +103,15 @@ export function buildTournamentTimeline(args: {
         }
         break;
       }
+      case "knockout": {
+        const victimId = str(p, "player_id");
+        const knockerId = str(p, "knocked_out_by_player_id");
+        const victim = victimId ? (nameByPlayerId.get(victimId) ?? "Someone") : "Someone";
+        description = knockerId
+          ? `${victim} was knocked out by ${nameByPlayerId.get(knockerId) ?? "someone"}`
+          : `Knockout credit on ${victim} cleared`;
+        break;
+      }
       case "bounty_collected": {
         const targetId = str(p, "target_player_id");
         const collectorId = str(p, "collected_by_player_id");

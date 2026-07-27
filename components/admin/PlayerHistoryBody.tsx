@@ -56,12 +56,20 @@ type PlayerImpression = {
   generatedAt: string;
 };
 
+/** One tournament where this player is credited with a knockout — the "who I busted" side; the "who busted me" side lives on each `history` row. */
+type PlayerKnockoutRow = {
+  tournamentId: string;
+  finishedAt: string | null;
+  victimName: string;
+};
+
 type PlayerProfile = {
   playerName: string;
   hasAnyGamesEver: boolean;
   stats: PlayerStatsRow | null;
   history: PlayerTournamentRow[];
   bounties: PlayerBountyRow[];
+  knockouts: PlayerKnockoutRow[];
   impression: PlayerImpression | null;
   chipStats: PlayerChipStats | null;
 };
@@ -111,6 +119,7 @@ async function loadPlayerProfile(args: {
       stats: null,
       history: [],
       bounties: [],
+      knockouts: [],
       impression,
       chipStats: null,
     };
@@ -123,7 +132,7 @@ async function loadPlayerProfile(args: {
   const allTournamentIds = allTournaments.map((t) => t.id);
   const { data: allRosterData } = await supabase
     .from("tournament_players")
-    .select("*, player:players(id, name)")
+    .select("*, player:players!tournament_players_player_id_fkey(id, name)")
     .eq("player_id", playerId)
     .in("tournament_id", allTournamentIds);
   const allRoster = (allRosterData ?? []) as unknown as RosterRow[];
@@ -140,6 +149,7 @@ async function loadPlayerProfile(args: {
       stats: null,
       history: [],
       bounties: [],
+      knockouts: [],
       impression,
       chipStats: null,
     };
@@ -151,6 +161,7 @@ async function loadPlayerProfile(args: {
     { data: rebuyData },
     { data: addOnData },
     { data: snapshotData },
+    { data: koVictimsData },
   ] = await Promise.all([
     supabase
       .from("prize_distributions")
@@ -174,6 +185,16 @@ async function loadPlayerProfile(args: {
       .from("tournament_events")
       .select("tournament_id, payload, created_at")
       .eq("type", "chip_snapshot")
+      .in("tournament_id", playedIds),
+    // The flip side of `roster`'s own knocked_out_by_player_id: every
+    // OTHER player's row this player is credited with busting. `roster`
+    // (scoped to player_id = playerId) can't tell us this, so it's a
+    // separate query rather than something buildPlayerStats can derive
+    // from the roster we're passing it below.
+    supabase
+      .from("tournament_players")
+      .select("tournament_id, player:players!tournament_players_player_id_fkey(id, name)")
+      .eq("knocked_out_by_player_id", playerId)
       .in("tournament_id", playedIds),
   ]);
 
@@ -199,6 +220,33 @@ async function loadPlayerProfile(args: {
   });
   const stats = allStats.find((s) => s.playerId === playerId) ?? null;
   const history = buildPlayerTournamentHistory({ tournaments, roster, payouts });
+
+  // buildPlayerStats credits knockouts by scanning `roster` for OTHER
+  // players' rows with knocked_out_by_player_id === this player — but
+  // `roster` here only holds this player's own rows, so `stats.knockouts`
+  // came back 0 regardless of reality. Patch it (and koRatio) from the
+  // dedicated koVictims query; totalEntries is unaffected since it only
+  // depends on this player's own tournamentsPlayed/rebuys/addons.
+  const finishedAtByTournament = new Map(tournaments.map((t) => [t.id, t.finished_at]));
+  const koVictims = (koVictimsData ?? []) as unknown as Array<{
+    tournament_id: string;
+    player: { id: string; name: string } | null;
+  }>;
+  const knockouts: PlayerKnockoutRow[] = koVictims
+    .map((v) => ({
+      tournamentId: v.tournament_id,
+      finishedAt: finishedAtByTournament.get(v.tournament_id) ?? null,
+      victimName: v.player?.name ?? "—",
+    }))
+    .sort((a, b) => {
+      const at = a.finishedAt ? Date.parse(a.finishedAt) : 0;
+      const bt = b.finishedAt ? Date.parse(b.finishedAt) : 0;
+      return bt - at;
+    });
+  if (stats) {
+    stats.knockouts = knockouts.length;
+    stats.koRatio = stats.totalEntries > 0 ? stats.knockouts / stats.totalEntries : 0;
+  }
 
   const snapshotEvents = (snapshotData ?? []) as ChipSnapshotEvent[];
   const myBreakShift = buildBreakShiftStats({
@@ -238,6 +286,14 @@ async function loadPlayerProfile(args: {
       otherIds.add(t.bounty_collected_by_player_id);
     }
   }
+  // buildPlayerTournamentHistory can only resolve a knocker's name from
+  // `roster`, which here is scoped to this player alone — fold the
+  // unresolved ids into the same other-player lookup.
+  for (const h of history) {
+    if (h.knockedOutByPlayerId && !h.knockedOutByName) {
+      otherIds.add(h.knockedOutByPlayerId);
+    }
+  }
   let otherNames = new Map<string, string>();
   if (otherIds.size > 0) {
     const { data: otherPlayers } = await supabase
@@ -245,6 +301,11 @@ async function loadPlayerProfile(args: {
       .select("id, name")
       .in("id", [...otherIds]);
     otherNames = new Map((otherPlayers ?? []).map((p) => [p.id, p.name]));
+  }
+  for (const h of history) {
+    if (h.knockedOutByPlayerId && !h.knockedOutByName) {
+      h.knockedOutByName = otherNames.get(h.knockedOutByPlayerId) ?? null;
+    }
   }
 
   const bounties: PlayerBountyRow[] = [];
@@ -288,6 +349,7 @@ async function loadPlayerProfile(args: {
     stats,
     history,
     bounties,
+    knockouts,
     impression,
     chipStats,
   };
@@ -320,7 +382,7 @@ export default async function PlayerHistoryBody({
   if (!profile) notFound();
 
   const ownPath = `${listBasePath}/${playerId}`;
-  const { stats, history, bounties, impression, chipStats } = profile;
+  const { stats, history, bounties, knockouts, impression, chipStats } = profile;
 
   return (
     <main className="flex min-h-screen flex-col bg-bg text-fg">
@@ -422,6 +484,11 @@ export default async function PlayerHistoryBody({
                 />
                 <StatRow label="Add-ons" value={stats.totalAddOns.toString()} />
                 <StatRow label="Gross / cost" value={`${formatMoney(stats.grossWinnings)} / ${formatMoney(stats.costBasis)}`} />
+                <StatRow label="Knockouts" value={stats.knockouts.toString()} />
+                <StatRow
+                  label="KO ratio"
+                  value={`${stats.koRatio.toFixed(2)}/entry · ${stats.totalEntries} total`}
+                />
               </dl>
             </section>
 
@@ -498,6 +565,29 @@ export default async function PlayerHistoryBody({
               </section>
             ) : null}
 
+            {knockouts.length > 0 ? (
+              <section className="rounded-md border border-fg/10 p-4">
+                <h2 className="text-label mb-3 text-[11px] font-semibold uppercase tracking-[0.25em]">
+                  Knockouts dealt
+                </h2>
+                <ul className="flex flex-col gap-1.5">
+                  {knockouts.map((k, i) => (
+                    <li
+                      key={`${k.tournamentId}-${i}`}
+                      className="flex items-baseline justify-between gap-2 px-2 py-1 text-xs"
+                    >
+                      <span className="text-fg/55">
+                        <LocalDateTime iso={k.finishedAt} />
+                      </span>
+                      <span className="font-mono tabular-nums text-fg/70">
+                        KO&apos;d {k.victimName}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ) : null}
+
             <section>
               <h2 className="text-label mb-2 text-[11px] font-semibold uppercase tracking-[0.25em]">
                 Tournament history
@@ -526,6 +616,7 @@ export default async function PlayerHistoryBody({
                           {h.rebuys} rebuy{h.rebuys === 1 ? "" : "s"} ·{" "}
                           {h.addOns} add-on{h.addOns === 1 ? "" : "s"} ·{" "}
                           {formatMoney(h.buyIn)} buy-in
+                          {h.knockedOutByName ? ` · KO by ${h.knockedOutByName}` : ""}
                         </p>
                         <p
                           className={`font-mono tabular-nums font-semibold ${

@@ -9,6 +9,7 @@ import {
   buildBountyLedger,
   buildBreakShiftStats,
   buildBustHistogram,
+  buildKnockoutLedger,
   buildLeaderboard,
   buildPlayerStats,
   buildTournamentSummaries,
@@ -129,7 +130,7 @@ export default async function HistoryBody({
   ] = await Promise.all([
     supabase
       .from("tournament_players")
-      .select("*, player:players(id, name)")
+      .select("*, player:players!tournament_players_player_id_fkey(id, name)")
       .in("tournament_id", tournamentIds),
     supabase
       .from("prize_distributions")
@@ -224,6 +225,16 @@ export default async function HistoryBody({
   const BOUNTY_LEDGER_MAX = 3;
   const bountyLedgerVisible = bountyLedger.slice(0, BOUNTY_LEDGER_MAX);
   const bountyLedgerHiddenCount = bountyLedger.length - bountyLedgerVisible.length;
+
+  const knockoutLedger = buildKnockoutLedger({ tournaments, roster });
+  const KNOCKOUT_LEDGER_MAX = 3;
+  const knockoutLedgerVisible = knockoutLedger.slice(0, KNOCKOUT_LEDGER_MAX);
+  const knockoutLedgerHiddenCount =
+    knockoutLedger.length - knockoutLedgerVisible.length;
+  const knockoutLeaders = [...playerStats]
+    .filter((p) => p.knockouts > 0)
+    .sort((a, b) => b.knockouts - a.knockouts || b.koRatio - a.koRatio)
+    .slice(0, 10);
 
   // Headline counts.
   const totalEntries = roster.length;
@@ -375,6 +386,47 @@ export default async function HistoryBody({
         </ol>
       </section>
 
+      {/* Most knockouts — who busts the most people, with their KO:entries
+          ratio alongside so a high count from just playing a lot of
+          tournaments reads differently from a high rate. */}
+      <section className="rounded-md border border-fg/10 p-4">
+        <h2 className="text-label mb-3 text-[11px] font-semibold uppercase tracking-[0.25em]">
+          Most knockouts
+        </h2>
+        <ol className="flex flex-col gap-1">
+          {knockoutLeaders.map((row, i) => (
+            <li
+              key={row.playerId}
+              className="flex items-baseline justify-between gap-2 px-2 py-1 text-sm"
+            >
+              <div className="flex items-baseline gap-3">
+                <span className="font-mono w-6 tabular-nums text-fg/55 text-xs">
+                  {i + 1}
+                </span>
+                <PlayerLink
+                  basePath={basePath}
+                  playerId={row.playerId}
+                  name={row.name}
+                />
+              </div>
+              <div className="flex items-baseline gap-3 font-mono text-xs tabular-nums text-fg/55">
+                <span className="text-fg">
+                  {row.knockouts} KO{row.knockouts === 1 ? "" : "s"}
+                </span>
+                <span className="w-16 text-right">
+                  {row.koRatio.toFixed(2)}/entry
+                </span>
+              </div>
+            </li>
+          ))}
+          {knockoutLeaders.length === 0 ? (
+            <li className="text-xs italic text-fg/40">
+              No knockouts recorded yet in this window.
+            </li>
+          ) : null}
+        </ol>
+      </section>
+
       {/* Bounty ledger — the running story of who's collected on whom.
           Gated on there being any bounty at all (early tournaments
           have none: no prior finished tournament to resolve one from). */}
@@ -446,6 +498,47 @@ export default async function HistoryBody({
           {bountyLedgerHiddenCount > 0 ? (
             <p className="mt-2 text-[10px] uppercase tracking-widest text-fg/40">
               +{bountyLedgerHiddenCount} more
+            </p>
+          ) : null}
+        </section>
+      ) : null}
+
+      {/* Knockout ledger — the running story of who busted whom. Gated
+          on there being any recorded knockout (it's an admin/table
+          admin action, so early-adopted history has none). */}
+      {knockoutLedger.length > 0 ? (
+        <section className="rounded-md border border-fg/10 p-4">
+          <h2 className="text-label mb-3 text-[11px] font-semibold uppercase tracking-[0.25em]">
+            Knockouts
+          </h2>
+          <ul className="flex flex-col gap-1.5">
+            {knockoutLedgerVisible.map((k) => (
+              <li
+                key={`${k.tournamentId}-${k.victimPlayerId}`}
+                className="flex items-baseline justify-between gap-2 px-2 py-1 text-xs"
+              >
+                <span className="text-fg/55">
+                  <LocalDateTime iso={k.finishedAt} /> ·{" "}
+                  <PlayerLink
+                    basePath={basePath}
+                    playerId={k.victimPlayerId}
+                    name={k.victimName}
+                  />
+                </span>
+                <span className="font-mono tabular-nums text-fg/70">
+                  KO&apos;d by{" "}
+                  <PlayerLink
+                    basePath={basePath}
+                    playerId={k.knockerPlayerId}
+                    name={k.knockerName}
+                  />
+                </span>
+              </li>
+            ))}
+          </ul>
+          {knockoutLedgerHiddenCount > 0 ? (
+            <p className="mt-2 text-[10px] uppercase tracking-widest text-fg/40">
+              +{knockoutLedgerHiddenCount} more
             </p>
           ) : null}
         </section>

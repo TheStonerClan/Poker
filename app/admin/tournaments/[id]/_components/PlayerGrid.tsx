@@ -11,6 +11,7 @@ import { formatChips } from "@/lib/admin/format";
 import type { LatestSnapshot } from "@/lib/admin/chip-snapshots";
 
 import { ChipEditButton } from "./ChipEditButton";
+import { KnockoutPicker } from "./KnockoutPicker";
 import { ManualColorUpButton } from "./ManualColorUpButton";
 import { MovePlayerButton } from "./MovePlayerButton";
 
@@ -24,6 +25,15 @@ type Row = {
   buybackUsedAs?: string | null;
   /** Current table assignment; null for single-table tournaments. */
   tableNumber?: number | null;
+  /**
+   * This roster row's own `players.id` — needed to exclude the busted
+   * player from their own knockout candidate list. Only busted rows
+   * need it; omitted from "in play" call sites.
+   */
+  playerId?: string | null;
+  /** Who busted them, if recorded (see KnockoutPicker). */
+  knockedOutByPlayerId?: string | null;
+  knockedOutByName?: string | null;
   /**
    * Player's most recent self-reported chip total (from /play during a
    * break). Drives the "Logged $X at L5 (+$200)" badge below the name.
@@ -46,6 +56,7 @@ export function PlayerGrid({
    */
   scope = "admin",
   tableOptions = [],
+  knockoutCandidates = [],
 }: {
   currentLevel: number;
   buybackConfig: {
@@ -60,6 +71,15 @@ export function PlayerGrid({
    * other table exists.
    */
   tableOptions?: TableOption[];
+  /**
+   * Knockout-attribution candidates — every roster player this grid's
+   * caller considers eligible to have busted someone here (the whole
+   * tournament for the admin page, just this table's roster for the
+   * scoped /table page). Each busted row filters out its own player_id.
+   * Omitted (or empty) call sites — e.g. the "in play" grid — simply
+   * never render the picker, since it's gated on `r.busted` too.
+   */
+  knockoutCandidates?: { playerId: string; name: string }[];
 }) {
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -91,6 +111,9 @@ export function PlayerGrid({
             r.busted && !r.buybackUsed && rebuyOpen;
           const showAddOn = !r.busted && !r.buybackUsed && addOnOpen;
           const showBust = !r.busted;
+          const koCandidates = r.busted
+            ? knockoutCandidates.filter((c) => c.playerId !== r.playerId)
+            : [];
 
           return (
             <li
@@ -117,6 +140,13 @@ export function PlayerGrid({
                 <p className="mt-0.5 text-[10px] uppercase tracking-wider text-gold/80">
                   Buyback · {r.buybackUsedAs ?? "used"}
                 </p>
+              ) : null}
+              {r.busted ? (
+                <KnockoutPicker
+                  tournamentPlayerId={r.id}
+                  knockedOutByName={r.knockedOutByName ?? null}
+                  candidates={koCandidates}
+                />
               ) : null}
               {r.latestSnapshot ? (
                 <p className="mt-0.5 text-[10px] tracking-wider text-fg/55">

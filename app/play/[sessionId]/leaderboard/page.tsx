@@ -41,7 +41,9 @@ export default async function LeaderboardPage({ params }: LeaderboardPageProps) 
 
   const { data: rosterRows } = await supabase
     .from("tournament_players")
-    .select("player_id, current_chips, table_number, busted_at_time, players(name)")
+    .select(
+      "player_id, current_chips, table_number, busted_at_time, players!tournament_players_player_id_fkey(name)",
+    )
     .eq("tournament_id", sessionId);
 
   const roster = (rosterRows ?? []).filter(
