@@ -278,6 +278,7 @@ export type TournamentSummaryRow = {
   addOns: number;
   prizePool: number;
   winnerName: string | null;
+  winnerId: string | null;
   chopped: boolean;
   buyIn: number;
 };
@@ -316,6 +317,7 @@ export function buildTournamentSummaries(args: {
       addOns,
       prizePool,
       winnerName: winnerRow?.player?.name ?? null,
+      winnerId: winnerRow?.player_id ?? null,
       chopped,
       buyIn: t.buy_in_snapshot,
     };
@@ -493,7 +495,7 @@ function readAtLevel(payload: Record<string, unknown> | null): number | null {
   return typeof v === "number" ? v : null;
 }
 
-function tournamentCostBasis(
+export function tournamentCostBasis(
   tournament: FinishedTournament,
 ): { rebuyPrice: number; addOnPrice: number } {
   const cfg = tournament.buyback_config_snapshot ?? null;
@@ -734,6 +736,73 @@ export function buildPlayerStats(args: {
     return b.net - a.net;
   });
 
+  return rows;
+}
+
+// ─── Per-player tournament-by-tournament history ────────────────────────────
+
+export type PlayerTournamentRow = {
+  tournamentId: string;
+  finishedAt: string | null;
+  position: number | null;
+  payout: number;
+  buyIn: number;
+  rebuys: number;
+  addOns: number;
+  bustedAtLevel: number | null;
+  net: number;
+};
+
+/**
+ * Row-level detail behind one player's aggregate `PlayerStatsRow` — the
+ * player profile page's tournament-by-tournament list. Caller is
+ * expected to have already scoped `roster` and `payouts` to just this
+ * one player (see PlayerHistoryBody's loader), so there's no
+ * player_id filtering here; every roster row becomes one output row.
+ */
+export function buildPlayerTournamentHistory(args: {
+  tournaments: FinishedTournament[];
+  roster: RosterRow[];
+  payouts: PayoutRow[];
+}): PlayerTournamentRow[] {
+  const tournamentById = new Map(args.tournaments.map((t) => [t.id, t]));
+  const payoutByTournament = new Map<string, number>();
+  for (const p of args.payouts) {
+    payoutByTournament.set(
+      p.tournament_id,
+      (payoutByTournament.get(p.tournament_id) ?? 0) + p.amount,
+    );
+  }
+
+  const rows: PlayerTournamentRow[] = [];
+  for (const r of args.roster) {
+    const t = tournamentById.get(r.tournament_id);
+    if (!t) continue;
+    const counts = tokenCounts(r);
+    const basis = tournamentCostBasis(t);
+    const payout = payoutByTournament.get(r.tournament_id) ?? 0;
+    const cost =
+      t.buy_in_snapshot +
+      counts.rebuys * basis.rebuyPrice +
+      counts.addOns * basis.addOnPrice;
+    rows.push({
+      tournamentId: r.tournament_id,
+      finishedAt: t.finished_at,
+      position: r.finishing_position,
+      payout,
+      buyIn: t.buy_in_snapshot,
+      rebuys: counts.rebuys,
+      addOns: counts.addOns,
+      bustedAtLevel: r.busted_at_level,
+      net: payout - cost,
+    });
+  }
+
+  rows.sort((a, b) => {
+    const at = a.finishedAt ? Date.parse(a.finishedAt) : 0;
+    const bt = b.finishedAt ? Date.parse(b.finishedAt) : 0;
+    return bt - at;
+  });
   return rows;
 }
 
