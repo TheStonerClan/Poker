@@ -7,7 +7,7 @@ import { formatBlinds } from "@/lib/tv/format";
 
 import BlindLevel from "@/components/tv/BlindLevel";
 import BottomBanner from "@/components/tv/BottomBanner";
-import BreakPanel, { type SegmentEvent } from "@/components/tv/BreakPanel";
+import BreakScreen, { type SegmentEvent } from "@/components/tv/BreakScreen";
 import ChipStack from "@/components/tv/ChipStack";
 import ClockRing from "@/components/tv/ClockRing";
 import NextLevel from "@/components/tv/NextLevel";
@@ -45,6 +45,7 @@ type Props = {
 };
 
 type TournamentEvent = {
+  id: string;
   type: string;
   payload: Record<string, unknown> | null;
   created_at: string;
@@ -319,6 +320,28 @@ export default function TvDisplay({
     colorUpGains,
   });
 
+  // Full (not top-3) chip standings for the break screen — every active
+  // player, tournament-wide and grouped per table.
+  const activePlayers = players.filter((p) => p.busted_at_time == null);
+  const toLeaderboardRow = (p: TournamentPlayerWithName) => ({
+    playerId: p.player_id,
+    name: p.players?.name ?? "—",
+    chips: p.current_chips ?? 0,
+  });
+  const overallLeaderboard = [...activePlayers]
+    .sort((a, b) => (b.current_chips ?? 0) - (a.current_chips ?? 0))
+    .map(toLeaderboardRow);
+  const perTableLeaderboards = tablesConfig
+    .map((cfg, i) => {
+      const tableNumber = i + 1;
+      const rows = activePlayers
+        .filter((p) => p.table_number === tableNumber)
+        .sort((a, b) => (b.current_chips ?? 0) - (a.current_chips ?? 0))
+        .map(toLeaderboardRow);
+      return { tableNumber, name: cfg.name, color: cfg.color, rows };
+    })
+    .filter((t) => t.rows.length > 0);
+
   const prizeRules = tournament.prize_rules_snapshot as unknown as PrizeRules;
   const rawPool = computePool({
     buyIn: tournament.buy_in_snapshot,
@@ -387,11 +410,23 @@ export default function TvDisplay({
     return 0;
   })();
 
+  // Events an admin has since reversed from the audit log shouldn't keep
+  // showing on the break screen — tournament_events is append-only, so an
+  // undo is a separate "undo" event referencing the original by id rather
+  // than a mutation of it.
+  const undoneEventIds = new Set(
+    events
+      .filter((e) => e.type === "undo")
+      .map((e) => e.payload?.undone_event_id as string | undefined)
+      .filter((id): id is string => typeof id === "string"),
+  );
+
   const lastSegmentEvents: SegmentEvent[] = isBreak
     ? events
         .filter(
           (e) =>
             (e.type === "bust" || e.type === "rebuy" || e.type === "addon") &&
+            !undoneEventIds.has(e.id) &&
             new Date(e.created_at).getTime() >= lastSegmentBoundary,
         )
         .slice(-24)
@@ -428,6 +463,25 @@ export default function TvDisplay({
     typeof buyback.addOnAtBreakLevel === "number" &&
     (currentLevel?.level_num ?? 0) >= buyback.addOnAtBreakLevel;
 
+  // Break gets the whole screen, not just the middle column — a top-3
+  // side strip is too small to be worth looking at, so break time takes
+  // over entirely to show full chip standings instead. Safe to branch
+  // here (after every hook above has already run this render).
+  if (isBreak && currentLevel) {
+    return (
+      <BreakScreen
+        remainingSec={clock.remainingSec}
+        level={currentLevel}
+        nextLevel={nextPlayingLevel}
+        levels={levels}
+        overallLeaderboard={overallLeaderboard}
+        perTableLeaderboards={perTableLeaderboards}
+        lastSegmentEvents={lastSegmentEvents}
+        qrValue={`${playSessionBaseUrl}/${tournamentId}`}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen bg-bg text-fg flex flex-col">
       {/* TOP BAND */}
@@ -447,29 +501,17 @@ export default function TvDisplay({
         </div>
 
         <div className="self-center justify-self-center">
-          {isBreak && currentLevel ? (
-            <BreakPanel
-              remainingSec={clock.remainingSec}
-              level={currentLevel}
-              nextLevel={nextPlayingLevel}
-              levels={levels}
-              lastSegmentEvents={lastSegmentEvents}
-              tableStats={tableStats}
-              bigBlind={currentLevel?.big}
-            />
-          ) : (
-            <ClockRing
-              blindsLabel={
-                currentLevel
-                  ? formatBlinds(currentLevel.small, currentLevel.big, currentLevel.ante)
-                  : "—"
-              }
-              remainingSec={clock.remainingSec}
-              durationSec={durationSec}
-              nextBreakSec={nextBreakSec}
-              paused={clock.isPaused}
-            />
-          )}
+          <ClockRing
+            blindsLabel={
+              currentLevel
+                ? formatBlinds(currentLevel.small, currentLevel.big, currentLevel.ante)
+                : "—"
+            }
+            remainingSec={clock.remainingSec}
+            durationSec={durationSec}
+            nextBreakSec={nextBreakSec}
+            paused={clock.isPaused}
+          />
         </div>
 
         {/* RIGHT COLUMN — prize pool up top, per-table top-3 chip
