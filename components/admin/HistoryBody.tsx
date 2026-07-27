@@ -520,21 +520,21 @@ export default async function HistoryBody({
           <CohortList
             basePath={basePath}
             title="Above average"
-            subtitle="Highest avg chip ratio at breaks"
+            subtitle="Chips vs. the table average at each check-in"
             rows={consistentlyAbove.map((b) => ({
               id: b.playerId,
               name: b.name,
-              value: `${b.avgChipsRatio.toFixed(2)}× · ${b.snapshotCount}`,
+              value: `${b.avgChipsRatio.toFixed(2)}× · ${b.snapshotCount} check-in${b.snapshotCount === 1 ? "" : "s"}`,
             }))}
           />
           <CohortList
             basePath={basePath}
             title="Below average"
-            subtitle="Lowest avg chip ratio at breaks"
+            subtitle="Chips vs. the table average at each check-in"
             rows={consistentlyBelow.map((b) => ({
               id: b.playerId,
               name: b.name,
-              value: `${b.avgChipsRatio.toFixed(2)}× · ${b.snapshotCount}`,
+              value: `${b.avgChipsRatio.toFixed(2)}× · ${b.snapshotCount} check-in${b.snapshotCount === 1 ? "" : "s"}`,
             }))}
           />
           <CohortList
