@@ -865,6 +865,14 @@ export type BreakShiftRow = {
    * the player has in the window.
    */
   avgChipsRatio: number;
+  /** Their single highest chips-vs-table-average ratio ever recorded. */
+  maxChipsRatio: number;
+  /** Their single lowest chips-vs-table-average ratio ever recorded. */
+  minChipsRatio: number;
+  /** Distinct tournaments where at least one check-in ratio was > 1. */
+  tournamentsAboveAverage: number;
+  /** Distinct tournaments where at least one check-in ratio was < 1. */
+  tournamentsBelowAverage: number;
   /**
    * Largest single between-break swing in chips for this player.
    * Computed as max |chips_after - chips_before| for any consecutive
@@ -937,6 +945,10 @@ export function buildBreakShiftStats(args: {
   for (const [playerId, perTournament] of byPlayer.entries()) {
     let ratioSum = 0;
     let ratioCount = 0;
+    let maxRatio = -Infinity;
+    let minRatio = Infinity;
+    const tournamentsAbove = new Set<string>();
+    const tournamentsBelow = new Set<string>();
     let biggestSwing = 0;
     let swingRatioSum = 0;
     let swingRatioCount = 0;
@@ -950,8 +962,13 @@ export function buildBreakShiftStats(args: {
         const mean =
           meansByTournamentLevel.get(`${s.tournamentId}:${s.level}`) ?? s.chips;
         if (mean > 0) {
-          ratioSum += s.chips / mean;
+          const ratio = s.chips / mean;
+          ratioSum += ratio;
           ratioCount += 1;
+          if (ratio > maxRatio) maxRatio = ratio;
+          if (ratio < minRatio) minRatio = ratio;
+          if (ratio > 1) tournamentsAbove.add(s.tournamentId);
+          if (ratio < 1) tournamentsBelow.add(s.tournamentId);
         }
         if (i > 0) {
           const prev = arr[i - 1];
@@ -978,6 +995,10 @@ export function buildBreakShiftStats(args: {
       name: nameByPlayer.get(playerId) ?? "—",
       snapshotCount: ratioCount,
       avgChipsRatio: ratioCount > 0 ? ratioSum / ratioCount : 1,
+      maxChipsRatio: ratioCount > 0 ? maxRatio : 1,
+      minChipsRatio: ratioCount > 0 ? minRatio : 1,
+      tournamentsAboveAverage: tournamentsAbove.size,
+      tournamentsBelowAverage: tournamentsBelow.size,
       biggestSwing,
       avgSwingRatio:
         swingRatioCount > 0 ? swingRatioSum / swingRatioCount : null,

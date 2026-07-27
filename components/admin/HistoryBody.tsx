@@ -283,10 +283,10 @@ export default async function HistoryBody({
   const hasEnoughBreakShiftData =
     eligibleForRatio.length >= MIN_BREAK_SHIFT_PLAYERS;
   const consistentlyAbove = [...eligibleForRatio]
-    .sort((a, b) => b.avgChipsRatio - a.avgChipsRatio)
+    .sort((a, b) => b.maxChipsRatio - a.maxChipsRatio)
     .slice(0, 5);
   const consistentlyBelow = [...eligibleForRatio]
-    .sort((a, b) => a.avgChipsRatio - b.avgChipsRatio)
+    .sort((a, b) => a.minChipsRatio - b.minChipsRatio)
     .slice(0, 5);
   const biggestSwingers = [...breakShifts]
     .filter((b) => b.biggestSwing > 0)
@@ -520,21 +520,21 @@ export default async function HistoryBody({
           <CohortList
             basePath={basePath}
             title="Above average"
-            subtitle="Chips vs. the table average at each check-in"
+            subtitle="Their biggest lead over the table average"
             rows={consistentlyAbove.map((b) => ({
               id: b.playerId,
               name: b.name,
-              value: `${b.avgChipsRatio.toFixed(2)}×`,
+              value: `${b.maxChipsRatio.toFixed(2)}× · ${b.tournamentsAboveAverage} tournament${b.tournamentsAboveAverage === 1 ? "" : "s"}`,
             }))}
           />
           <CohortList
             basePath={basePath}
             title="Below average"
-            subtitle="Chips vs. the table average at each check-in"
+            subtitle="Their biggest deficit vs. the table average"
             rows={consistentlyBelow.map((b) => ({
               id: b.playerId,
               name: b.name,
-              value: `${b.avgChipsRatio.toFixed(2)}×`,
+              value: `${b.minChipsRatio.toFixed(2)}× · ${b.tournamentsBelowAverage} tournament${b.tournamentsBelowAverage === 1 ? "" : "s"}`,
             }))}
           />
           <CohortList
