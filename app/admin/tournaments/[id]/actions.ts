@@ -1952,6 +1952,25 @@ export async function adjustChips(input: {
       },
     });
 
+    // Also append a chip_snapshot — same event type /play's self-report
+    // and the /table check-in panel write — so an admin's "Chips" edit
+    // feeds the same break-shift analytics on /history a player's own
+    // update would, not just the chip_adjust audit trail. Not gated to
+    // break levels, matching the check-in panel (this button gets used
+    // at the final table too, which does not always land on a break).
+    await supabase.from("tournament_events").insert({
+      tournament_id: slot.tournament_id,
+      type: "chip_snapshot",
+      payload: {
+        player_id: slot.player_id,
+        level_num: t.current_level,
+        chips: after,
+        previous_chips: before,
+        delta: after - before,
+        reported_by: slot.actor === "admin" ? "admin" : "table_admin",
+      },
+    });
+
     await refresh(slot.tournament_id);
   });
 }
