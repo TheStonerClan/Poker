@@ -10,6 +10,7 @@ import BottomBanner from "@/components/tv/BottomBanner";
 import BreakScreen, { type SegmentEvent } from "@/components/tv/BreakScreen";
 import ChipStack from "@/components/tv/ChipStack";
 import ClockRing from "@/components/tv/ClockRing";
+import FinalTableLeaderboard from "@/components/tv/FinalTableLeaderboard";
 import NextLevel from "@/components/tv/NextLevel";
 import { PlayerHeader, StackStats } from "@/components/tv/PlayerStats";
 import PrizePool from "@/components/tv/PrizePool";
@@ -514,9 +515,13 @@ export default function TvDisplay({
           />
         </div>
 
-        {/* RIGHT COLUMN — prize pool up top, per-table top-3 chip
-            leaderboard stacked underneath it so multi-table nights get
-            an elongated card list instead of a cramped horizontal strip. */}
+        {/* RIGHT COLUMN — prize pool up top, chip leaderboard stacked
+            underneath. Multi-table nights get the top-3-per-table strip;
+            once the field is down to one active table (a Merge, or a
+            tournament that only ever had one), that strip has nothing to
+            compare across tables and hides itself, so show the full
+            final-table roster (max 9) instead — the column has the room
+            for it once it's not sharing space with other tables' cards. */}
         <div className="flex flex-col items-end gap-[clamp(0.75rem,1.5vh,1.5rem)] justify-self-end w-full max-w-[18rem]">
           <PrizePool
             totalPool={effectivePool}
@@ -531,8 +536,14 @@ export default function TvDisplay({
                 : null
             }
           />
-          {tableStats.length > 1 ? (
+          {perTableLeaderboards.length > 1 ? (
             <TableLeaders stats={tableStats} bigBlind={currentLevel?.big} />
+          ) : perTableLeaderboards.length === 1 ? (
+            <FinalTableLeaderboard
+              tableName={perTableLeaderboards[0].name}
+              color={perTableLeaderboards[0].color}
+              rows={perTableLeaderboards[0].rows}
+            />
           ) : null}
         </div>
       </main>
