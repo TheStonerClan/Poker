@@ -524,7 +524,7 @@ export default async function HistoryBody({
             rows={consistentlyAbove.map((b) => ({
               id: b.playerId,
               name: b.name,
-              value: `${b.avgChipsRatio.toFixed(2)}× · ${b.snapshotCount} check-in${b.snapshotCount === 1 ? "" : "s"}`,
+              value: `${b.avgChipsRatio.toFixed(2)}×`,
             }))}
           />
           <CohortList
@@ -534,7 +534,7 @@ export default async function HistoryBody({
             rows={consistentlyBelow.map((b) => ({
               id: b.playerId,
               name: b.name,
-              value: `${b.avgChipsRatio.toFixed(2)}× · ${b.snapshotCount} check-in${b.snapshotCount === 1 ? "" : "s"}`,
+              value: `${b.avgChipsRatio.toFixed(2)}×`,
             }))}
           />
           <CohortList
