@@ -59,115 +59,56 @@ export type Database = {
         }
         Relationships: []
       }
-      hands: {
+      color_up_requests: {
         Row: {
-          ante: number
-          bb_seat: number
-          big_blind: number
-          completed_at: string | null
-          current_street: string
-          dealer_seat: number
-          hand_number: number
+          created_at: string
+          exchange_for_chips: Json
           id: string
-          level_num: number
-          notes: string | null
-          sb_seat: number
-          small_blind: number
-          started_at: string
+          player_id: string
+          processed_at: string | null
+          processed_by: string | null
+          session_id: string
           status: string
-          table_number: number
+          submitted_chips: Json
           tournament_id: string
         }
         Insert: {
-          ante?: number
-          bb_seat: number
-          big_blind: number
-          completed_at?: string | null
-          current_street?: string
-          dealer_seat: number
-          hand_number: number
+          created_at?: string
+          exchange_for_chips: Json
           id?: string
-          level_num: number
-          notes?: string | null
-          sb_seat: number
-          small_blind: number
-          started_at?: string
+          player_id: string
+          processed_at?: string | null
+          processed_by?: string | null
+          session_id: string
           status?: string
-          table_number: number
+          submitted_chips: Json
           tournament_id: string
         }
         Update: {
-          ante?: number
-          bb_seat?: number
-          big_blind?: number
-          completed_at?: string | null
-          current_street?: string
-          dealer_seat?: number
-          hand_number?: number
+          created_at?: string
+          exchange_for_chips?: Json
           id?: string
-          level_num?: number
-          notes?: string | null
-          sb_seat?: number
-          small_blind?: number
-          started_at?: string
+          player_id?: string
+          processed_at?: string | null
+          processed_by?: string | null
+          session_id?: string
           status?: string
-          table_number?: number
+          submitted_chips?: Json
           tournament_id?: string
         }
         Relationships: [
           {
-            foreignKeyName: "hands_tournament_id_fkey"
+            foreignKeyName: "color_up_requests_player_id_fkey"
+            columns: ["player_id"]
+            isOneToOne: false
+            referencedRelation: "players"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "color_up_requests_tournament_id_fkey"
             columns: ["tournament_id"]
             isOneToOne: false
             referencedRelation: "tournaments"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      hand_seats: {
-        Row: {
-          current_chips: number
-          hand_id: string
-          is_all_in: boolean
-          is_folded: boolean
-          seat_number: number
-          starting_chips: number
-          total_contributed: number
-          tournament_player_id: string
-        }
-        Insert: {
-          current_chips: number
-          hand_id: string
-          is_all_in?: boolean
-          is_folded?: boolean
-          seat_number: number
-          starting_chips: number
-          total_contributed?: number
-          tournament_player_id: string
-        }
-        Update: {
-          current_chips?: number
-          hand_id?: string
-          is_all_in?: boolean
-          is_folded?: boolean
-          seat_number?: number
-          starting_chips?: number
-          total_contributed?: number
-          tournament_player_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "hand_seats_hand_id_fkey"
-            columns: ["hand_id"]
-            isOneToOne: false
-            referencedRelation: "hands"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "hand_seats_tournament_player_id_fkey"
-            columns: ["tournament_player_id"]
-            isOneToOne: false
-            referencedRelation: "tournament_players"
             referencedColumns: ["id"]
           },
         ]
@@ -271,54 +212,161 @@ export type Database = {
           },
         ]
       }
-      color_up_requests: {
+      hand_seats: {
         Row: {
-          created_at: string
-          exchange_for_chips: Json
+          current_chips: number
+          hand_id: string
+          is_all_in: boolean
+          is_folded: boolean
+          seat_number: number
+          starting_chips: number
+          total_contributed: number
+          tournament_player_id: string
+        }
+        Insert: {
+          current_chips: number
+          hand_id: string
+          is_all_in?: boolean
+          is_folded?: boolean
+          seat_number: number
+          starting_chips: number
+          total_contributed?: number
+          tournament_player_id: string
+        }
+        Update: {
+          current_chips?: number
+          hand_id?: string
+          is_all_in?: boolean
+          is_folded?: boolean
+          seat_number?: number
+          starting_chips?: number
+          total_contributed?: number
+          tournament_player_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "hand_seats_hand_id_fkey"
+            columns: ["hand_id"]
+            isOneToOne: false
+            referencedRelation: "hands"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "hand_seats_tournament_player_id_fkey"
+            columns: ["tournament_player_id"]
+            isOneToOne: false
+            referencedRelation: "tournament_players"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      hands: {
+        Row: {
+          ante: number
+          bb_seat: number
+          big_blind: number
+          completed_at: string | null
+          current_street: string
+          dealer_seat: number
+          hand_number: number
           id: string
-          player_id: string
-          processed_at: string | null
-          processed_by: string | null
-          session_id: string
+          level_num: number
+          notes: string | null
+          sb_seat: number
+          small_blind: number
+          started_at: string
           status: string
-          submitted_chips: Json
+          table_number: number
           tournament_id: string
         }
         Insert: {
-          created_at?: string
-          exchange_for_chips: Json
+          ante?: number
+          bb_seat: number
+          big_blind: number
+          completed_at?: string | null
+          current_street?: string
+          dealer_seat: number
+          hand_number: number
           id?: string
-          player_id: string
-          processed_at?: string | null
-          processed_by?: string | null
-          session_id: string
+          level_num: number
+          notes?: string | null
+          sb_seat: number
+          small_blind: number
+          started_at?: string
           status?: string
-          submitted_chips: Json
+          table_number: number
           tournament_id: string
         }
         Update: {
-          created_at?: string
-          exchange_for_chips?: Json
+          ante?: number
+          bb_seat?: number
+          big_blind?: number
+          completed_at?: string | null
+          current_street?: string
+          dealer_seat?: number
+          hand_number?: number
           id?: string
-          player_id?: string
-          processed_at?: string | null
-          processed_by?: string | null
-          session_id?: string
+          level_num?: number
+          notes?: string | null
+          sb_seat?: number
+          small_blind?: number
+          started_at?: string
           status?: string
-          submitted_chips?: Json
+          table_number?: number
           tournament_id?: string
         }
         Relationships: [
           {
-            foreignKeyName: "color_up_requests_player_id_fkey"
+            foreignKeyName: "hands_tournament_id_fkey"
+            columns: ["tournament_id"]
+            isOneToOne: false
+            referencedRelation: "tournaments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      player_impressions: {
+        Row: {
+          created_at: string
+          generated_at: string
+          id: string
+          impression: string
+          is_sandbox: boolean
+          model: string
+          player_id: string
+          source_tournament_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          generated_at?: string
+          id?: string
+          impression: string
+          is_sandbox?: boolean
+          model: string
+          player_id: string
+          source_tournament_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          generated_at?: string
+          id?: string
+          impression?: string
+          is_sandbox?: boolean
+          model?: string
+          player_id?: string
+          source_tournament_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "player_impressions_player_id_fkey"
             columns: ["player_id"]
             isOneToOne: false
             referencedRelation: "players"
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "color_up_requests_tournament_id_fkey"
-            columns: ["tournament_id"]
+            foreignKeyName: "player_impressions_source_tournament_id_fkey"
+            columns: ["source_tournament_id"]
             isOneToOne: false
             referencedRelation: "tournaments"
             referencedColumns: ["id"]
@@ -443,6 +491,36 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      signal_dispatches: {
+        Row: {
+          bridge_response: Json | null
+          created_at: string
+          group_id: string
+          id: string
+          key: string
+          kind: string
+          status: string
+        }
+        Insert: {
+          bridge_response?: Json | null
+          created_at?: string
+          group_id: string
+          id?: string
+          key: string
+          kind: string
+          status: string
+        }
+        Update: {
+          bridge_response?: Json | null
+          created_at?: string
+          group_id?: string
+          id?: string
+          key?: string
+          kind?: string
+          status?: string
+        }
+        Relationships: []
       }
       tournament_events: {
         Row: {
@@ -751,10 +829,10 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "tournaments_template_id_fkey"
-            columns: ["template_id"]
+            foreignKeyName: "tournaments_bounty_collected_by_player_id_fkey"
+            columns: ["bounty_collected_by_player_id"]
             isOneToOne: false
-            referencedRelation: "tournament_templates"
+            referencedRelation: "players"
             referencedColumns: ["id"]
           },
           {
@@ -765,10 +843,10 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "tournaments_bounty_collected_by_player_id_fkey"
-            columns: ["bounty_collected_by_player_id"]
+            foreignKeyName: "tournaments_template_id_fkey"
+            columns: ["template_id"]
             isOneToOne: false
-            referencedRelation: "players"
+            referencedRelation: "tournament_templates"
             referencedColumns: ["id"]
           },
         ]
@@ -778,8 +856,11 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      delete_tournament: {
+        Args: { p_tournament_id: string }
+        Returns: undefined
+      }
       is_admin: { Args: never; Returns: boolean }
-      delete_tournament: { Args: { p_tournament_id: string }; Returns: void }
     }
     Enums: {
       [_ in never]: never
