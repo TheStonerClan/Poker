@@ -283,15 +283,32 @@ function PayoutsSlide({
             </span>
           </li>
         ))}
+        {bounty ? (
+          <>
+            {/* One position's worth of empty space separating the paid
+                positions from the bounty below. */}
+            <li aria-hidden className="h-[clamp(1.75rem,3.5vh,2.75rem)]" />
+            <li className="flex items-baseline justify-between gap-4 rounded-md border-2 border-gold bg-gold/10 px-4 py-2.5">
+              <div className="flex items-baseline gap-3 min-w-0">
+                <span className="font-mono text-[clamp(1rem,1.5vw,1.4rem)] text-gold tabular-nums w-[6ch]">
+                  Bounty
+                </span>
+                <span className="font-mono text-fg text-[clamp(1rem,1.6vw,1.6rem)] truncate">
+                  {bounty.collectedByName ?? bounty.targetName}
+                </span>
+                {!bounty.collectedByName ? (
+                  <span className="text-fg/50 text-[clamp(0.6rem,0.8vw,0.75rem)] uppercase tracking-wider whitespace-nowrap">
+                    unclaimed
+                  </span>
+                ) : null}
+              </div>
+              <span className="font-mono text-value text-[clamp(1.1rem,1.7vw,1.6rem)] tabular-nums">
+                {formatMoney(bounty.amount)}
+              </span>
+            </li>
+          </>
+        ) : null}
       </ul>
-      {bounty ? (
-        <p className="mt-2 text-center text-[clamp(0.7rem,0.9vw,0.85rem)] text-gold-bright">
-          {formatMoney(bounty.amount)} bounty{" "}
-          {bounty.collectedByName
-            ? `won by ${bounty.collectedByName}`
-            : `on ${bounty.targetName}`}
-        </p>
-      ) : null}
       <div className="mt-[clamp(0.5rem,1vh,1rem)] flex items-baseline justify-between border-t border-gold/30 pt-3">
         <span className="text-label uppercase tracking-[0.25em] text-[clamp(0.7rem,0.9vw,0.85rem)]">
           Prize pool
