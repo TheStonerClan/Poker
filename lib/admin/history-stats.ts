@@ -11,6 +11,18 @@
 
 import { BASE_BOUNTY_AMOUNT } from "@/lib/bounty";
 
+/**
+ * Knockout tracking (PR #68) went live at this moment. Every tournament
+ * finished before it has zero recorded knockouts not because nobody got
+ * knocked out, but because there was no way to record it — counting
+ * those entries in the KO:entries ratio's denominator would silently
+ * deflate every player's ratio with games that could never have
+ * contributed a KO. `koRatio` (and the entries it's computed from) only
+ * count tournaments finished at or after this cutoff; every other stat
+ * (points, wins, rebuys, avg finish, etc.) still uses the full window.
+ */
+const KNOCKOUT_TRACKING_START_MS = Date.parse("2026-07-27T20:10:00.000Z");
+
 export type FinishedTournament = {
   id: string;
   /**
@@ -623,13 +635,14 @@ export type PlayerStatsRow = {
   /** Total players this player is credited with busting, across the window. */
   knockouts: number;
   /**
-   * Paid entries across the window: one per tournament played, plus
-   * every rebuy and add-on (each is its own paid entry into that
-   * night's pool). Always >= tournamentsPlayed since a played
-   * tournament without any buybacks still counts as 1.
+   * Paid entries since knockout tracking went live (KNOCKOUT_TRACKING_START):
+   * one per tournament played, plus every rebuy and add-on, counting only
+   * tournaments finished at or after that cutoff — NOT the full window
+   * every other stat on this row uses. Can be 0 for a player who hasn't
+   * played since tracking started, even if tournamentsPlayed is > 0.
    */
   totalEntries: number;
-  /** knockouts / totalEntries. 0 when totalEntries is 0 (shouldn't happen — see totalEntries). */
+  /** knockouts / totalEntries, both scoped to the knockout-tracking era. 0 when totalEntries is 0. */
   koRatio: number;
 };
 
@@ -674,6 +687,8 @@ export function buildPlayerStats(args: {
     totalAddOns: number;
     finishingPositions: number[];
     knockouts: number;
+    /** Paid entries in tournaments finished at/after KNOCKOUT_TRACKING_START_MS only — see totalEntries's doc comment. */
+    koEntries: number;
   };
   const byPlayer = new Map<string, Acc>();
   const ensure = (id: string, name: string): Acc => {
@@ -694,6 +709,7 @@ export function buildPlayerStats(args: {
         totalAddOns: 0,
         finishingPositions: [],
         knockouts: 0,
+        koEntries: 0,
       };
       byPlayer.set(id, acc);
     }
@@ -726,6 +742,10 @@ export function buildPlayerStats(args: {
     acc.totalRebuys += counts.rebuys;
     acc.totalAddOns += counts.addOns;
     if (counts.rebuys > 0) acc.tournamentsWithRebuy.add(r.tournament_id);
+    const finishedMs = tournament.finished_at ? Date.parse(tournament.finished_at) : NaN;
+    if (Number.isFinite(finishedMs) && finishedMs >= KNOCKOUT_TRACKING_START_MS) {
+      acc.koEntries += 1 + counts.rebuys + counts.addOns;
+    }
   }
 
   // Knockout credit — a second pass so every player's Acc already
@@ -784,12 +804,11 @@ export function buildPlayerStats(args: {
         ? acc.finishingPositions.reduce((s, n) => s + n, 0) /
           acc.finishingPositions.length
         : null;
-    // Paid entries: one per played tournament (win or lose) plus every
-    // rebuy and add-on — each of those is its own paid entry into that
-    // night's pool, matching how `bountyEntries` counts entries
-    // elsewhere. Always >= 1 for any player in this map (they only get
-    // an Acc by having played something).
-    const totalEntries = tournamentsPlayed + acc.totalRebuys + acc.totalAddOns;
+    // Paid entries since knockout tracking existed (see
+    // KNOCKOUT_TRACKING_START_MS) — NOT the full window every other stat
+    // here uses. Can be 0 even for a long-tenured player if they haven't
+    // played since tracking started.
+    const totalEntries = acc.koEntries;
     const koRatio = totalEntries > 0 ? acc.knockouts / totalEntries : 0;
     rows.push({
       playerId,
