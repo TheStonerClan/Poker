@@ -23,6 +23,7 @@ import {
   TABLE_COLOR_CSS,
 } from "@/lib/admin/tables";
 
+import { ChipSnapshotPanel } from "@/app/admin/tournaments/[id]/_components/ChipSnapshotPanel";
 import { ColorUpInbox } from "@/app/admin/tournaments/[id]/_components/ColorUpInbox";
 import { PlayerGrid } from "@/app/admin/tournaments/[id]/_components/PlayerGrid";
 
@@ -253,6 +254,18 @@ export default async function TableAdminPage({
             Edit seats
           </Link>
         </section>
+
+        <ChipSnapshotPanel
+          tournamentId={tournamentId}
+          tableNumber={tableNumber}
+          players={inPlay
+            .filter((r) => r.player)
+            .map((r) => ({
+              tournamentPlayerId: r.id,
+              name: r.player?.name ?? "—",
+              currentChips: r.current_chips,
+            }))}
+        />
 
         {myColorUps.length > 0 ? (
           <section className="rounded-lg border border-gold/40 bg-gold/5 p-3">

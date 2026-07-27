@@ -9,6 +9,8 @@
  * Supabase JS client.
  */
 
+import { BASE_BOUNTY_AMOUNT } from "@/lib/bounty";
+
 export type FinishedTournament = {
   id: string;
   /**
@@ -39,6 +41,17 @@ export type FinishedTournament = {
     addOnPrice?: number;
     rebuyPrice?: number;
   } | null;
+  /** Resolved once at creation (see `resolveBounty`); null if no target. */
+  bounty_target_player_id?: string | null;
+  /**
+   * Dollar amount pulled from this tournament's pool. Can exceed
+   * BASE_BOUNTY_AMOUNT when it stacked from a prior unclaimed week —
+   * see BASE_BOUNTY_AMOUNT's doc comment for why only the base amount
+   * ever comes out of any single week's pool.
+   */
+  bounty_amount?: number | null;
+  /** Set once an admin records who busted the target; null until then. */
+  bounty_collected_by_player_id?: string | null;
 };
 
 export type RosterRow = {
@@ -307,6 +320,65 @@ export function buildTournamentSummaries(args: {
       buyIn: t.buy_in_snapshot,
     };
   });
+}
+
+// ─── Bounty ledger ──────────────────────────────────────────────────────────
+
+export type BountyLedgerRow = {
+  tournamentId: string;
+  finishedAt: string | null;
+  targetPlayerId: string;
+  targetName: string;
+  amount: number;
+  /** True when `amount` carried over from a prior unclaimed week. */
+  isStacked: boolean;
+  collectorPlayerId: string | null;
+  collectorName: string | null;
+};
+
+/**
+ * One row per tournament that had a bounty in play (`resolveBounty` sets
+ * `bounty_target_player_id` at creation; not every tournament has one —
+ * there's no prior finished tournament, or none of its finishers came
+ * back). Target and collector names are resolved from the already-
+ * fetched roster rather than a separate query: both are guaranteed to
+ * be in that tournament's roster (target is chosen from returning
+ * players, collector is whoever busted them), so no join is missing.
+ */
+export function buildBountyLedger(args: {
+  tournaments: FinishedTournament[];
+  roster: RosterRow[];
+}): BountyLedgerRow[] {
+  const { tournaments, roster } = args;
+
+  const nameByPlayer = new Map<string, string>();
+  for (const r of roster) {
+    if (r.player_id && r.player?.name) nameByPlayer.set(r.player_id, r.player.name);
+  }
+
+  const rows: BountyLedgerRow[] = [];
+  for (const t of tournaments) {
+    if (!t.bounty_target_player_id) continue;
+    // tournaments.bounty_amount is Postgres `numeric`, which comes back
+    // from the Supabase client as a string — Number(...) it here so
+    // downstream summing (bountyCollectorCounts in HistoryBody) doesn't
+    // silently string-concat instead of adding. Same guard as
+    // lib/admin/bounty.ts's resolveBounty().
+    const amount = Number(t.bounty_amount ?? BASE_BOUNTY_AMOUNT);
+    rows.push({
+      tournamentId: t.id,
+      finishedAt: t.finished_at,
+      targetPlayerId: t.bounty_target_player_id,
+      targetName: nameByPlayer.get(t.bounty_target_player_id) ?? "—",
+      amount,
+      isStacked: amount > BASE_BOUNTY_AMOUNT,
+      collectorPlayerId: t.bounty_collected_by_player_id ?? null,
+      collectorName: t.bounty_collected_by_player_id
+        ? (nameByPlayer.get(t.bounty_collected_by_player_id) ?? "—")
+        : null,
+    });
+  }
+  return rows;
 }
 
 function groupBy<T, K>(items: T[], key: (item: T) => K): Map<K, T[]> {
