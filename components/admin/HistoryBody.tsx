@@ -6,6 +6,7 @@ import { SandboxBadge } from "@/components/SandboxBadge";
 import { formatChips, formatMoney } from "@/lib/admin/format";
 import {
   applyHistoryRange,
+  buildBountyLedger,
   buildBreakShiftStats,
   buildBustHistogram,
   buildLeaderboard,
@@ -65,7 +66,7 @@ export default async function HistoryBody({
   const { data: tournamentsData } = await supabase
     .from("tournaments")
     .select(
-      "id, template_id, status, finished_at, started_at, buy_in_snapshot, current_level, rebuy_price_snapshot, buyback_config_snapshot, blind_structure_snapshot",
+      "id, template_id, status, finished_at, started_at, buy_in_snapshot, current_level, rebuy_price_snapshot, buyback_config_snapshot, blind_structure_snapshot, bounty_target_player_id, bounty_amount, bounty_collected_by_player_id",
     )
     .eq("status", "finished")
     .eq("is_sandbox", isSandbox)
@@ -218,6 +219,7 @@ export default async function HistoryBody({
     roster,
     events: snapshotEvents,
   });
+  const bountyLedger = buildBountyLedger({ tournaments, roster });
 
   // Headline counts.
   const totalEntries = roster.length;
@@ -243,8 +245,39 @@ export default async function HistoryBody({
     .sort((a, b) => b.totalAddOns - a.totalAddOns)
     .slice(0, 5);
 
-  // Break-shift cohorts.
+  // Bounty collector cohort — how many times each player has cashed
+  // in someone else's bounty. Built from the ledger rather than
+  // playerStats since it's the only place this count exists.
+  const bountyCollectorCounts = new Map<
+    string,
+    { name: string; count: number; total: number }
+  >();
+  for (const b of bountyLedger) {
+    if (!b.collectorPlayerId || !b.collectorName) continue;
+    const acc = bountyCollectorCounts.get(b.collectorPlayerId) ?? {
+      name: b.collectorName,
+      count: 0,
+      total: 0,
+    };
+    acc.count += 1;
+    acc.total += b.amount;
+    bountyCollectorCounts.set(b.collectorPlayerId, acc);
+  }
+  const bountyHunters = [...bountyCollectorCounts.entries()]
+    .map(([id, v]) => ({ id, ...v }))
+    .sort((a, b) => b.count - a.count || b.total - a.total)
+    .slice(0, 5);
+
+  // Break-shift cohorts. Each row in breakShifts is already one distinct
+  // player (buildBreakShiftStats groups by playerId), so eligibleForRatio's
+  // length is the count of distinct players with enough data — gate the
+  // whole section on that being >= 3, not just "> 0", so a single habitual
+  // self-reporter can't show up as simultaneously the highest and lowest
+  // average.
+  const MIN_BREAK_SHIFT_PLAYERS = 3;
   const eligibleForRatio = breakShifts.filter((b) => b.snapshotCount >= 2);
+  const hasEnoughBreakShiftData =
+    eligibleForRatio.length >= MIN_BREAK_SHIFT_PLAYERS;
   const consistentlyAbove = [...eligibleForRatio]
     .sort((a, b) => b.avgChipsRatio - a.avgChipsRatio)
     .slice(0, 5);
@@ -330,6 +363,63 @@ export default async function HistoryBody({
         </ol>
       </section>
 
+      {/* Bounty ledger — the running story of who's collected on whom.
+          Gated on there being any bounty at all (early tournaments
+          have none: no prior finished tournament to resolve one from). */}
+      {bountyLedger.length > 0 ? (
+        <section className="rounded-md border border-fg/10 p-4">
+          <h2 className="text-label mb-3 text-[11px] font-semibold uppercase tracking-[0.25em]">
+            Bounties
+          </h2>
+          {bountyHunters.length > 0 ? (
+            <ol className="mb-3 flex flex-col gap-1">
+              {bountyHunters.map((h, i) => (
+                <li
+                  key={h.id}
+                  className="flex items-baseline justify-between gap-2 px-2 py-1 text-sm"
+                >
+                  <div className="flex items-baseline gap-3">
+                    <span className="font-mono w-6 tabular-nums text-fg/55 text-xs">
+                      {i + 1}
+                    </span>
+                    <span className="font-semibold text-fg">{h.name}</span>
+                  </div>
+                  <div className="flex items-baseline gap-3 font-mono text-xs tabular-nums text-fg/55">
+                    <span>
+                      {h.count} bount{h.count === 1 ? "y" : "ies"}
+                    </span>
+                    <span className="text-fg w-16 text-right">
+                      {formatMoney(h.total)}
+                    </span>
+                  </div>
+                </li>
+              ))}
+            </ol>
+          ) : null}
+          <ul className="flex flex-col gap-1.5 border-t border-fg/10 pt-2">
+            {bountyLedger.map((b) => (
+              <li
+                key={b.tournamentId}
+                className="flex items-baseline justify-between gap-2 px-2 py-1 text-xs"
+              >
+                <span className="text-fg/55">
+                  <LocalDateTime iso={b.finishedAt} /> · {formatMoney(b.amount)}
+                  {b.isStacked ? (
+                    <span className="ml-1 text-gold/80">stacked</span>
+                  ) : null}{" "}
+                  on <span className="font-semibold text-fg">{b.targetName}</span>
+                </span>
+                <span className="font-mono tabular-nums text-fg/70">
+                  {b.collectorName
+                    ? `collected by ${b.collectorName}`
+                    : "unclaimed"}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
       {/* Per-player rebuy / addon / bust stats — the granular view.
           Sortable on every numeric column. */}
       <section className="rounded-md border border-fg/10 p-4">
@@ -378,13 +468,16 @@ export default async function HistoryBody({
         />
       </section>
 
-      {/* Break-shift analysis — three more ranked lists, gated on
-          chip_snapshot data being available. Empty state when nobody
-          has reported during a break in the window. */}
-      {breakShifts.length === 0 ? (
+      {/* Break-shift analysis — three more ranked lists, gated on at
+          least MIN_BREAK_SHIFT_PLAYERS distinct players having enough
+          chip_snapshot data. Below that, "highest" and "lowest" are the
+          same one or two habitual self-reporters, which reads as broken
+          rather than as a small sample. */}
+      {!hasEnoughBreakShiftData ? (
         <section className="rounded-md border border-dashed border-fg/15 p-4 text-center text-xs text-fg/55">
-          Break-shift analytics need player-reported chip snapshots from
-          the /play view. None recorded in this window yet.
+          Break-shift analytics need at least {MIN_BREAK_SHIFT_PLAYERS}{" "}
+          players reporting chip snapshots from the /play view during a
+          break. Not enough data in this window yet.
         </section>
       ) : (
         <section className="grid grid-cols-1 gap-3 sm:grid-cols-3">
