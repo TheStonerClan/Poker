@@ -1,9 +1,7 @@
 import "server-only";
 
+import { BASE_BOUNTY_AMOUNT } from "@/lib/bounty";
 import { createClient } from "@/lib/supabase/server";
-
-/** House rule: the bounty stacks by this amount each time it goes unclaimed. */
-export const BASE_BOUNTY_AMOUNT = 20;
 
 export type ResolvedBounty = {
   targetPlayerId: string;
