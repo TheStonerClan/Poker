@@ -59,6 +59,10 @@ type PlayerFacts = {
   }>;
 };
 
+export type RefreshImpressionsResult =
+  | { ok: true; count: number }
+  | { ok: false; error: string };
+
 /**
  * Regenerate every player's "post-tournament impression" blurb for one
  * scope (real league or sandbox — never mixed), in a single batched
@@ -72,21 +76,43 @@ type PlayerFacts = {
  * synopsis of the relationship, not scoped to whatever range filter a
  * viewer happens to have picked on the profile page.
  *
- * Never throws in a way the caller needs to handle specially: a
- * missing API key, a malformed response, or a network failure all
- * just log and return. Called from performFinalize, which must never
- * fail or stall because impression generation had a bad day.
+ * `sourceTournamentId` records which tournament's finalize triggered
+ * the refresh; omit it for an admin-initiated on-demand refresh not
+ * tied to any particular finalize — it then falls back to the most
+ * recently finished tournament in this scope purely as a
+ * record-keeping label (there's nothing to summarize, and this
+ * resolves to an error result, when there's no finished tournament to
+ * fall back to).
+ *
+ * Never throws — every failure (missing API key, no data, a malformed
+ * response, a network error) resolves to `{ ok: false, error }` after
+ * logging, rather than rejecting. performFinalize calls this and must
+ * never fail or stall because impression generation had a bad day; the
+ * admin-triggered on-demand refresh reads the result to show real
+ * success/failure feedback instead.
  */
 export async function refreshAllPlayerImpressions(args: {
   isSandbox: boolean;
-  sourceTournamentId: string;
-}): Promise<void> {
+  sourceTournamentId?: string | null;
+}): Promise<RefreshImpressionsResult> {
+  try {
+    return await doRefreshAllPlayerImpressions(args);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("refreshAllPlayerImpressions: unexpected error", err);
+    return { ok: false, error: message };
+  }
+}
+
+async function doRefreshAllPlayerImpressions(args: {
+  isSandbox: boolean;
+  sourceTournamentId?: string | null;
+}): Promise<RefreshImpressionsResult> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
-    console.error(
-      "refreshAllPlayerImpressions: ANTHROPIC_API_KEY is not set, skipping",
-    );
-    return;
+    const message = "ANTHROPIC_API_KEY is not set";
+    console.error(`refreshAllPlayerImpressions: ${message}, skipping`);
+    return { ok: false, error: message };
   }
 
   const supabase = createServiceClient();
@@ -102,7 +128,13 @@ export async function refreshAllPlayerImpressions(args: {
     .limit(TOURNAMENT_LIMIT);
 
   const tournaments = (finished ?? []) as FinishedTournament[];
-  if (tournaments.length === 0) return;
+  if (tournaments.length === 0) {
+    return { ok: false, error: "No finished tournaments to summarize yet" };
+  }
+  // Falls back to the most recently finished tournament when the caller
+  // (an on-demand admin refresh) doesn't have a specific one in hand —
+  // this is only ever a record-keeping label, never read back for logic.
+  const sourceTournamentId = args.sourceTournamentId ?? tournaments[0].id;
 
   const tournamentIds = tournaments.map((t) => t.id);
 
@@ -139,7 +171,9 @@ export async function refreshAllPlayerImpressions(args: {
   ]);
 
   const roster = (rosterData ?? []) as unknown as RosterRow[];
-  if (roster.length === 0) return;
+  if (roster.length === 0) {
+    return { ok: false, error: "No roster rows to summarize yet" };
+  }
   const payouts = (payoutsData ?? []) as PayoutRow[];
   const rebuyEvents = (rebuyData ?? []) as TokenEvent[];
   const addOnEvents = (addOnData ?? []) as TokenEvent[];
@@ -219,7 +253,9 @@ export async function refreshAllPlayerImpressions(args: {
     };
   });
 
-  if (facts.length === 0) return;
+  if (facts.length === 0) {
+    return { ok: false, error: "No players to summarize yet" };
+  }
 
   const anthropic = new Anthropic({ apiKey });
   const response = await anthropic.messages.create({
@@ -231,8 +267,9 @@ export async function refreshAllPlayerImpressions(args: {
 
   const textBlock = response.content.find((b) => b.type === "text");
   if (!textBlock || textBlock.type !== "text") {
-    console.error("refreshAllPlayerImpressions: no text block in response");
-    return;
+    const message = "No text block in Claude's response";
+    console.error(`refreshAllPlayerImpressions: ${message}`);
+    return { ok: false, error: message };
   }
 
   // Strip a markdown fence defensively in case the model wraps the JSON
@@ -244,11 +281,12 @@ export async function refreshAllPlayerImpressions(args: {
     parsed = JSON.parse(raw);
   } catch (err) {
     console.error("refreshAllPlayerImpressions: failed to parse JSON", err, raw);
-    return;
+    return { ok: false, error: "Claude's response wasn't valid JSON" };
   }
   if (!Array.isArray(parsed)) {
-    console.error("refreshAllPlayerImpressions: response was not an array");
-    return;
+    const message = "Claude's response wasn't a JSON array";
+    console.error(`refreshAllPlayerImpressions: ${message}`);
+    return { ok: false, error: message };
   }
 
   const knownIds = new Set(facts.map((f) => f.playerId));
@@ -267,13 +305,14 @@ export async function refreshAllPlayerImpressions(args: {
       is_sandbox: args.isSandbox,
       impression: entry.impression.trim(),
       model: MODEL,
-      source_tournament_id: args.sourceTournamentId,
+      source_tournament_id: sourceTournamentId,
       generated_at: new Date().toISOString(),
     }));
 
   if (rows.length === 0) {
-    console.error("refreshAllPlayerImpressions: no valid rows to write");
-    return;
+    const message = "Claude's response had no usable impressions";
+    console.error(`refreshAllPlayerImpressions: ${message}`);
+    return { ok: false, error: message };
   }
 
   const { error } = await supabase
@@ -281,5 +320,8 @@ export async function refreshAllPlayerImpressions(args: {
     .upsert(rows, { onConflict: "player_id,is_sandbox" });
   if (error) {
     console.error("refreshAllPlayerImpressions: upsert failed", error);
+    return { ok: false, error: error.message };
   }
+
+  return { ok: true, count: rows.length };
 }
