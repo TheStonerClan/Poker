@@ -15,7 +15,7 @@ import {
   type TokenEvent,
 } from "@/lib/admin/history-stats";
 
-const MODEL = "claude-sonnet-5";
+const MODEL = "claude-opus-5";
 const TOURNAMENT_LIMIT = 60;
 const RECENT_HISTORY_COUNT = 3;
 // Non-streaming; well under any HTTP timeout for this response size, and
@@ -85,17 +85,20 @@ export type RefreshImpressionsResult =
   | { ok: false; error: string };
 
 /**
- * Regenerate every player's "post-tournament impression" blurb for one
- * scope (real league or sandbox — never mixed), in a single batched
- * Claude call rather than one call per player. Batching keeps this
- * fast and cheap even as the roster grows, and lets the model see the
- * whole field at once (useful context for anything relative, like who
- * else is on a streak) without actually asking it to compare players
+ * Regenerate players' "post-tournament impression" blurbs for one scope
+ * (real league or sandbox — never mixed), in a single batched Claude
+ * call rather than one call per player. Batching keeps this fast and
+ * cheap even as the roster grows, and lets the model see the whole
+ * field at once (useful context for anything relative, like who else
+ * is on a streak) without actually asking it to compare players
  * against each other in the output.
  *
  * Always "all time" for the scope — impressions are a standing
  * synopsis of the relationship, not scoped to whatever range filter a
- * viewer happens to have picked on the profile page.
+ * viewer happens to have picked on the profile page. That applies even
+ * when `playerIds` narrows *which* players get refreshed: each
+ * included player's blurb is still built from their full history, not
+ * just the triggering tournament.
  *
  * `sourceTournamentId` records which tournament's finalize triggered
  * the refresh; omit it for an admin-initiated on-demand refresh not
@@ -104,6 +107,14 @@ export type RefreshImpressionsResult =
  * record-keeping label (there's nothing to summarize, and this
  * resolves to an error result, when there's no finished tournament to
  * fall back to).
+ *
+ * `playerIds`, when given, restricts the refresh to just those
+ * players (still computed from each one's full all-time history) —
+ * performFinalize passes just the roster of the tournament that
+ * finished, since regenerating all 25+ players on every finalize would
+ * burn tokens on 20+ players whose stats didn't even change tonight.
+ * Omit it (the admin-triggered on-demand "Refresh all" button's case)
+ * to cover everyone with at least one recorded game in this scope.
  *
  * Never throws — every failure (missing API key, no data, a malformed
  * response, a network error) resolves to `{ ok: false, error }` after
@@ -115,6 +126,7 @@ export type RefreshImpressionsResult =
 export async function refreshAllPlayerImpressions(args: {
   isSandbox: boolean;
   sourceTournamentId?: string | null;
+  playerIds?: string[];
 }): Promise<RefreshImpressionsResult> {
   try {
     return await doRefreshAllPlayerImpressions(args);
@@ -128,6 +140,7 @@ export async function refreshAllPlayerImpressions(args: {
 async function doRefreshAllPlayerImpressions(args: {
   isSandbox: boolean;
   sourceTournamentId?: string | null;
+  playerIds?: string[];
 }): Promise<RefreshImpressionsResult> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
@@ -234,7 +247,14 @@ async function doRefreshAllPlayerImpressions(args: {
     rebuyEvents,
     addOnEvents,
   });
-  const facts: PlayerFacts[] = playerStats.map((stats) => {
+  // Narrow to just the requested players (e.g. tonight's roster) before
+  // doing any further per-player work — cheaper, and keeps the Claude
+  // call's input (and therefore output) scoped to what was asked for.
+  const targetIds = args.playerIds ? new Set(args.playerIds) : null;
+  const scopedStats = targetIds
+    ? playerStats.filter((s) => targetIds.has(s.playerId))
+    : playerStats;
+  const facts: PlayerFacts[] = scopedStats.map((stats) => {
     const theirRoster = roster.filter((r) => r.player_id === stats.playerId);
     const history = buildPlayerTournamentHistory({
       tournaments,
@@ -275,7 +295,12 @@ async function doRefreshAllPlayerImpressions(args: {
   });
 
   if (facts.length === 0) {
-    return { ok: false, error: "No players to summarize yet" };
+    return {
+      ok: false,
+      error: targetIds
+        ? "None of the given players have recorded stats yet"
+        : "No players to summarize yet",
+    };
   }
 
   const anthropic = new Anthropic({ apiKey });

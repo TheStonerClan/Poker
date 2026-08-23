@@ -123,9 +123,10 @@ export default async function SettingsPage() {
           <p className="mt-2 text-sm text-fg/70">
             Regenerates every player&rsquo;s &ldquo;post-tournament
             impression&rdquo; blurb — the AI-written summary shown on each
-            player&rsquo;s /history profile. Runs automatically after every
-            tournament finalizes; use this to refresh on demand (e.g. after
-            a manual stats correction).
+            player&rsquo;s /history profile. A tournament finalizing
+            already refreshes that night&rsquo;s roster automatically; use
+            this to cover everyone else too (e.g. after a manual stats
+            correction).
           </p>
         </section>
 

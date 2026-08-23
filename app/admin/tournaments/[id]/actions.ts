@@ -1152,16 +1152,23 @@ async function performFinalize(
     }
   }
 
-  // Refresh every player's AI-generated "post-tournament impression"
-  // (shown on their /history/[player] profile). Same isolation as the
-  // Signal dispatch above — a Claude API hiccup or missing key must
-  // never unwind or delay the finalize itself. Runs for sandbox too
-  // (unlike the recap), since that's the safe place to try the feature
-  // out without touching the real league's blurbs.
+  // Refresh AI-generated "post-tournament impression" blurbs (shown on
+  // /history/[player]) for just tonight's roster — not the whole
+  // league — so a finalize doesn't burn tokens regenerating 20+
+  // players whose stats didn't change. The admin's on-demand "Refresh
+  // all" button in Settings covers everyone else. Same isolation as
+  // the Signal dispatch above — a Claude API hiccup or missing key
+  // must never unwind or delay the finalize itself. Runs for sandbox
+  // too (unlike the recap), since that's the safe place to try the
+  // feature out without touching the real league's blurbs.
   try {
+    const playerIds = rankedPlayers
+      .map((p) => p.player_id)
+      .filter((id): id is string => !!id);
     await refreshAllPlayerImpressions({
       isSandbox: t.is_sandbox,
       sourceTournamentId: tournamentId,
+      playerIds,
     });
   } catch (err) {
     console.error("player impression refresh failed", err);
