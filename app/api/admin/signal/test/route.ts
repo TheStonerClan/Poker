@@ -20,10 +20,10 @@ import { z } from "zod";
 import { requireAdmin } from "@/lib/auth";
 import { createServiceClient } from "@/lib/supabase/service";
 import { resolveNextNight } from "@/lib/schedule/server";
+import { toIsoDate } from "@/lib/schedule/next-night";
 import {
   isValidHhMm,
   isValidTimezone,
-  localDateInTz,
   splitHhMm,
   zonedWallClockToUtc,
 } from "@/lib/schedule/zoned-time";
@@ -145,7 +145,9 @@ async function buildWeekOut(templateId: string): Promise<PreparedDispatch> {
   const timezone = isValidTimezone(tpl.start_timezone)
     ? tpl.start_timezone
     : DEFAULT_TIMEZONE;
-  const effectiveYmd = localDateInTz(resolved.next.effectiveDate, timezone);
+  // `effectiveDate` is a plain calendar date, not a real zoned instant —
+  // see the matching comment in the week-out-reminder cron route.
+  const effectiveYmd = toIsoDate(resolved.next.effectiveDate);
   const startTimeStr = isValidHhMm(tpl.start_time)
     ? tpl.start_time
     : DEFAULT_START_TIME;
