@@ -100,6 +100,75 @@ suite("resolveNextNightFromOverrides — moved", () => {
   });
 });
 
+suite("resolveNextNightFromOverrides — moved, original date already passed", () => {
+  test("still resolves the moved-to date once today is past the original date but before the moved-to date", () => {
+    // 2026-05-15 (3rd Friday of May) was moved out to 2026-05-29 — a
+    // 2-week push. Asking on 2026-05-20 (after the 15th, before the 29th)
+    // must still surface the moved date: the rule's own forward walk can
+    // never land back on 2026-05-15 once it's in the past, so this only
+    // works if the resolver checks pending moves independently of the walk.
+    const result = resolveNextNightFromOverrides({
+      rule: thirdFriday,
+      now: d(2026, 5, 20),
+      overrides: overrideMap({
+        "2026-05-15": {
+          id: "abc",
+          overridden_date: "2026-05-29",
+          note: "pushed two weeks",
+        },
+      }),
+    });
+    assert.equal(result.kind, "ok");
+    if (result.kind !== "ok") return;
+    assert.equal(toIsoDate(result.next.originalDate), "2026-05-15");
+    assert.equal(toIsoDate(result.next.effectiveDate), "2026-05-29");
+    assert.equal(result.next.isMoved, true);
+    assert.equal(result.next.overrideId, "abc");
+  });
+
+  test("stops surfacing the move once its moved-to date has also passed", () => {
+    // Same move as above, but asking on 2026-05-30 — the moved-to date
+    // (5-29) is now in the past too, so it should no longer be offered;
+    // the rule's next natural occurrence (June 19) takes over.
+    const result = resolveNextNightFromOverrides({
+      rule: thirdFriday,
+      now: d(2026, 5, 30),
+      overrides: overrideMap({
+        "2026-05-15": {
+          id: "abc",
+          overridden_date: "2026-05-29",
+          note: "pushed two weeks",
+        },
+      }),
+    });
+    assert.equal(result.kind, "ok");
+    if (result.kind !== "ok") return;
+    assert.equal(toIsoDate(result.next.effectiveDate), "2026-06-19");
+    assert.equal(result.next.isMoved, false);
+  });
+
+  test("prefers a sooner unmoved occurrence over a farther-out pending move", () => {
+    // 2026-05-15 was pushed all the way to 2026-08-14 (way out). Asking on
+    // 2026-05-20, the *next* occurrence is still June 19 (no override) —
+    // the resolver must not let the pending move (August) preempt it.
+    const result = resolveNextNightFromOverrides({
+      rule: thirdFriday,
+      now: d(2026, 5, 20),
+      overrides: overrideMap({
+        "2026-05-15": {
+          id: "abc",
+          overridden_date: "2026-08-14",
+          note: "pushed way out",
+        },
+      }),
+    });
+    assert.equal(result.kind, "ok");
+    if (result.kind !== "ok") return;
+    assert.equal(toIsoDate(result.next.effectiveDate), "2026-06-19");
+    assert.equal(result.next.isMoved, false);
+  });
+});
+
 suite("resolveNextNightFromOverrides — cancelled", () => {
   test("skips a cancelled occurrence to the next rule date", () => {
     const result = resolveNextNightFromOverrides({

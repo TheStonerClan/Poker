@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { RefreshImpressionsButton } from "@/app/history/_components/RefreshImpressionsButton";
 import { TopBar } from "@/components/admin/TopBar";
 import { getTemplates } from "@/lib/admin/queries";
 import { toIsoDate } from "@/lib/schedule/next-night";
@@ -109,6 +110,23 @@ export default async function SettingsPage() {
           <p className="mt-3 text-xs text-fg/50">
             Edit each template&rsquo;s recurring rule and one-off date overrides
             from its Schedule tab.
+          </p>
+        </section>
+
+        <section className="rounded-lg border border-fg/10 p-4">
+          <div className="flex items-baseline justify-between gap-3">
+            <h2 className="text-label text-[11px] font-semibold uppercase tracking-[0.25em]">
+              AI impressions
+            </h2>
+            <RefreshImpressionsButton isSandbox={false} />
+          </div>
+          <p className="mt-2 text-sm text-fg/70">
+            Regenerates every player&rsquo;s &ldquo;post-tournament
+            impression&rdquo; blurb — the AI-written summary shown on each
+            player&rsquo;s /history profile. A tournament finalizing
+            already refreshes that night&rsquo;s roster automatically; use
+            this to cover everyone else too (e.g. after a manual stats
+            correction).
           </p>
         </section>
 

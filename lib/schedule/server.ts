@@ -33,11 +33,19 @@ export async function resolveNextNight(
   if (!rule) return { kind: "no-rule" };
 
   const today = toIsoDate(new Date(now.getFullYear(), now.getMonth(), now.getDate()));
+  // A move stays relevant after its OWN original_date has passed, as long
+  // as the date it was moved TO hasn't happened yet — the rule's own
+  // sequence can never re-derive an ad-hoc moved-to date once it's walked
+  // past the original slot (see next-night.ts's header comment), so this
+  // can't just filter on original_date the way a cancellation-only filter
+  // could. Cancellations (overridden_date null) don't need the same
+  // relaxation: a future one is still reachable by the normal walk, and a
+  // past one is simply moot either way.
   const { data, error } = await supabase
     .from("schedule_overrides")
     .select("id, original_date, overridden_date, note")
     .eq("template_id", template.id)
-    .gte("original_date", today)
+    .or(`overridden_date.gte.${today},and(overridden_date.is.null,original_date.gte.${today})`)
     .order("original_date", { ascending: true })
     .limit(MAX_LOOKAHEAD * 2);
 

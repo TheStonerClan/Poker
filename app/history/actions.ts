@@ -17,9 +17,12 @@ export type RefreshImpressionsActionResult =
  * normally only runs automatically at the end of `performFinalize`.
  * Useful right after a manual stats correction (a backfilled rebuy, a
  * fixed payout, ...) so the AI blurbs don't sit stale until the next
- * tournament finishes. Regenerates every player's blurb in one scope
- * (real league or sandbox) — same batched call finalize uses, not
- * scoped to whichever player's page the admin happened to be on.
+ * tournament finishes. Regenerates EVERY player with at least one
+ * recorded game in this scope (real league or sandbox) — not scoped
+ * to whichever player's page the admin happened to be on, and
+ * deliberately broader than performFinalize's own call, which only
+ * covers that night's roster to keep the routine per-finalize refresh
+ * cheap.
  */
 export async function refreshPlayerImpressions(input: {
   isSandbox: boolean;

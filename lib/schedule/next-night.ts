@@ -15,6 +15,14 @@
 // looks at the rule's *next* date (June 19) and applies overrides to that,
 // recursively, up to MAX_LOOKAHEAD steps.
 //
+// A moved occurrence can outlive its own original date: once "today" passes
+// the original date, the rule's own forward walk (nextOccurrence) can never
+// land back on it — the *rule* only knows about May 15, June 19, ..., never
+// about an ad-hoc moved-to date like May 22. So a move to a date more than
+// a few days out needs to stay resolvable even after its original date has
+// come and gone but before the moved-to date has. See the "orphaned pending
+// move" handling below.
+//
 // This module is pure — no Supabase, no Next.js, no I/O. The server-side
 // wrapper that loads overrides from the database lives in ./server.ts.
 
@@ -93,20 +101,56 @@ export function resolveNextNightFromOverrides(args: {
   /** Map keyed by original_date as YYYY-MM-DD. */
   overrides: ReadonlyMap<string, OverrideEntry>;
 }): NextNightResolution {
+  const todayIso = toIsoDate(
+    new Date(args.now.getFullYear(), args.now.getMonth(), args.now.getDate()),
+  );
+
+  const walked = walkRuleForOverrides(args.rule, args.now, args.overrides);
+  const pending = earliestPendingMove(args.overrides, todayIso);
+
+  if (!pending) return walked;
+  if (walked.kind !== "ok" || pending.effectiveIso < toIsoDate(walked.next.effectiveDate)) {
+    return {
+      kind: "ok",
+      next: {
+        originalDate: fromIsoDate(pending.originalIso),
+        effectiveDate: fromIsoDate(pending.effectiveIso),
+        isMoved: true,
+        overrideId: pending.override.id,
+        note: pending.override.note,
+      },
+    };
+  }
+  return walked;
+}
+
+/**
+ * The rule's own natural forward walk, applying an override only where the
+ * walk actually lands (i.e. the override's original_date is still >= the
+ * walk's cursor). This alone misses a move whose original_date has already
+ * passed — resolveNextNightFromOverrides backfills that separately via
+ * earliestPendingMove, since the rule's sequence can never revisit a date
+ * it's already walked past.
+ */
+function walkRuleForOverrides(
+  rule: RecurrenceRule,
+  now: Date,
+  overrides: ReadonlyMap<string, OverrideEntry>,
+): NextNightResolution {
   // Use yesterday-end as the cursor so a night scheduled for *today* still counts.
-  const cursor = new Date(args.now.getFullYear(), args.now.getMonth(), args.now.getDate());
+  const cursor = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   cursor.setMilliseconds(cursor.getMilliseconds() - 1);
 
   let original: Date;
   try {
-    original = nextOccurrence(args.rule, cursor);
+    original = nextOccurrence(rule, cursor);
   } catch {
     return { kind: "all-cancelled", lookedAhead: 0 };
   }
 
   for (let i = 0; i < MAX_LOOKAHEAD; i++) {
     const key = toIsoDate(original);
-    const override = args.overrides.get(key);
+    const override = overrides.get(key);
 
     if (!override) {
       return {
@@ -137,11 +181,34 @@ export function resolveNextNightFromOverrides(args: {
 
     // Cancelled — advance to the next rule date and re-check.
     try {
-      original = nextOccurrence(args.rule, original);
+      original = nextOccurrence(rule, original);
     } catch {
       return { kind: "all-cancelled", lookedAhead: i + 1 };
     }
   }
 
   return { kind: "all-cancelled", lookedAhead: MAX_LOOKAHEAD };
+}
+
+/**
+ * The earliest still-upcoming moved-to date among ALL overrides, regardless
+ * of whether its original_date is in the past — the one thing
+ * walkRuleForOverrides structurally cannot find on its own. Cancellations
+ * (overridden_date null) never need this: once a cancelled date is in the
+ * past it's simply moot, and a future one is still reachable by the normal
+ * walk since the rule hasn't passed it yet.
+ */
+function earliestPendingMove(
+  overrides: ReadonlyMap<string, OverrideEntry>,
+  todayIso: string,
+): { originalIso: string; effectiveIso: string; override: OverrideEntry } | null {
+  let best: { originalIso: string; effectiveIso: string; override: OverrideEntry } | null = null;
+  for (const [originalIso, override] of overrides) {
+    const effectiveIso = override.overridden_date;
+    if (effectiveIso == null || effectiveIso < todayIso) continue;
+    if (!best || effectiveIso < best.effectiveIso) {
+      best = { originalIso, effectiveIso, override };
+    }
+  }
+  return best;
 }

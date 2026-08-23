@@ -1,6 +1,8 @@
 import "server-only";
 
 import Anthropic from "@anthropic-ai/sdk";
+import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
+import { z } from "zod";
 
 import { createServiceClient } from "@/lib/supabase/service";
 import {
@@ -13,9 +15,15 @@ import {
   type TokenEvent,
 } from "@/lib/admin/history-stats";
 
-const MODEL = "claude-sonnet-5";
+const MODEL = "claude-opus-5";
 const TOURNAMENT_LIMIT = 60;
 const RECENT_HISTORY_COUNT = 3;
+// Non-streaming; well under any HTTP timeout for this response size, and
+// generous enough that a growing roster doesn't get truncated mid-response
+// (each blurb is short, but 25+ players' worth of {playerId, impression}
+// entries adds up — the previous 4096 cap was the direct cause of the
+// "invalid JSON" failures: the response got cut off mid-array).
+const MAX_OUTPUT_TOKENS = 16_000;
 
 const SYSTEM_PROMPT = `You write extremely short "post-tournament impression" blurbs for a home poker league's public stats page.
 
@@ -25,8 +33,21 @@ If a player has very little data (0-1 recorded tournaments), keep the blurb brie
 
 Some tournaments in a player's recentHistory include a "chipCheckpoints" list — their reported chip count at specific levels that night, in order. When present, you may describe their stack trajectory (e.g., built an early lead before fading, or ground up from a short stack) using only those exact chip counts and levels. Most tournaments won't have this — never imply a trajectory for one that doesn't.
 
-Respond with ONLY a JSON array, no markdown fences, no commentary, one entry per player in the input, same order:
-[{"playerId": "...", "impression": "..."}, ...]`;
+Return one impression per player in the input, same order.`;
+
+// Structured output schema — the API enforces this shape server-side, so
+// there's no more markdown-fence stripping or manual JSON.parse of raw
+// model text to get wrong (that free-text approach is exactly what broke
+// as the roster grew: one stray unescaped quote or a cut-off response
+// anywhere in a 25-entry array invalidated the whole batch).
+const ImpressionsResponseSchema = z.object({
+  impressions: z.array(
+    z.object({
+      playerId: z.string(),
+      impression: z.string(),
+    }),
+  ),
+});
 
 type PlayerFacts = {
   playerId: string;
@@ -64,17 +85,20 @@ export type RefreshImpressionsResult =
   | { ok: false; error: string };
 
 /**
- * Regenerate every player's "post-tournament impression" blurb for one
- * scope (real league or sandbox — never mixed), in a single batched
- * Claude call rather than one call per player. Batching keeps this
- * fast and cheap even as the roster grows, and lets the model see the
- * whole field at once (useful context for anything relative, like who
- * else is on a streak) without actually asking it to compare players
+ * Regenerate players' "post-tournament impression" blurbs for one scope
+ * (real league or sandbox — never mixed), in a single batched Claude
+ * call rather than one call per player. Batching keeps this fast and
+ * cheap even as the roster grows, and lets the model see the whole
+ * field at once (useful context for anything relative, like who else
+ * is on a streak) without actually asking it to compare players
  * against each other in the output.
  *
  * Always "all time" for the scope — impressions are a standing
  * synopsis of the relationship, not scoped to whatever range filter a
- * viewer happens to have picked on the profile page.
+ * viewer happens to have picked on the profile page. That applies even
+ * when `playerIds` narrows *which* players get refreshed: each
+ * included player's blurb is still built from their full history, not
+ * just the triggering tournament.
  *
  * `sourceTournamentId` records which tournament's finalize triggered
  * the refresh; omit it for an admin-initiated on-demand refresh not
@@ -83,6 +107,14 @@ export type RefreshImpressionsResult =
  * record-keeping label (there's nothing to summarize, and this
  * resolves to an error result, when there's no finished tournament to
  * fall back to).
+ *
+ * `playerIds`, when given, restricts the refresh to just those
+ * players (still computed from each one's full all-time history) —
+ * performFinalize passes just the roster of the tournament that
+ * finished, since regenerating all 25+ players on every finalize would
+ * burn tokens on 20+ players whose stats didn't even change tonight.
+ * Omit it (the admin-triggered on-demand "Refresh all" button's case)
+ * to cover everyone with at least one recorded game in this scope.
  *
  * Never throws — every failure (missing API key, no data, a malformed
  * response, a network error) resolves to `{ ok: false, error }` after
@@ -94,6 +126,7 @@ export type RefreshImpressionsResult =
 export async function refreshAllPlayerImpressions(args: {
   isSandbox: boolean;
   sourceTournamentId?: string | null;
+  playerIds?: string[];
 }): Promise<RefreshImpressionsResult> {
   try {
     return await doRefreshAllPlayerImpressions(args);
@@ -107,6 +140,7 @@ export async function refreshAllPlayerImpressions(args: {
 async function doRefreshAllPlayerImpressions(args: {
   isSandbox: boolean;
   sourceTournamentId?: string | null;
+  playerIds?: string[];
 }): Promise<RefreshImpressionsResult> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
@@ -213,7 +247,14 @@ async function doRefreshAllPlayerImpressions(args: {
     rebuyEvents,
     addOnEvents,
   });
-  const facts: PlayerFacts[] = playerStats.map((stats) => {
+  // Narrow to just the requested players (e.g. tonight's roster) before
+  // doing any further per-player work — cheaper, and keeps the Claude
+  // call's input (and therefore output) scoped to what was asked for.
+  const targetIds = args.playerIds ? new Set(args.playerIds) : null;
+  const scopedStats = targetIds
+    ? playerStats.filter((s) => targetIds.has(s.playerId))
+    : playerStats;
+  const facts: PlayerFacts[] = scopedStats.map((stats) => {
     const theirRoster = roster.filter((r) => r.player_id === stats.playerId);
     const history = buildPlayerTournamentHistory({
       tournaments,
@@ -254,51 +295,43 @@ async function doRefreshAllPlayerImpressions(args: {
   });
 
   if (facts.length === 0) {
-    return { ok: false, error: "No players to summarize yet" };
+    return {
+      ok: false,
+      error: targetIds
+        ? "None of the given players have recorded stats yet"
+        : "No players to summarize yet",
+    };
   }
 
   const anthropic = new Anthropic({ apiKey });
-  const response = await anthropic.messages.create({
+  const response = await anthropic.messages.parse({
     model: MODEL,
-    max_tokens: 4096,
+    max_tokens: MAX_OUTPUT_TOKENS,
     system: SYSTEM_PROMPT,
     messages: [{ role: "user", content: JSON.stringify(facts) }],
+    output_config: { format: zodOutputFormat(ImpressionsResponseSchema) },
   });
 
-  const textBlock = response.content.find((b) => b.type === "text");
-  if (!textBlock || textBlock.type !== "text") {
-    const message = "No text block in Claude's response";
+  // `.parse()` throws (caught by the outer wrapper) if the response text
+  // doesn't validate against the schema at all — this check catches the
+  // milder case where it validated but got cut off before covering every
+  // player, which a token-limit truncation could still produce even at
+  // MAX_OUTPUT_TOKENS for a large enough roster.
+  if (response.stop_reason === "max_tokens") {
+    const message = `Claude's response was cut off at the ${MAX_OUTPUT_TOKENS}-token limit`;
     console.error(`refreshAllPlayerImpressions: ${message}`);
     return { ok: false, error: message };
   }
-
-  // Strip a markdown fence defensively in case the model wraps the JSON
-  // despite being told not to.
-  const raw = textBlock.text.trim().replace(/^```(?:json)?\n?|\n?```$/g, "");
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (err) {
-    console.error("refreshAllPlayerImpressions: failed to parse JSON", err, raw);
-    return { ok: false, error: "Claude's response wasn't valid JSON" };
-  }
-  if (!Array.isArray(parsed)) {
-    const message = "Claude's response wasn't a JSON array";
+  if (!response.parsed_output) {
+    const message = "Claude's response didn't match the expected format";
     console.error(`refreshAllPlayerImpressions: ${message}`);
     return { ok: false, error: message };
   }
 
   const knownIds = new Set(facts.map((f) => f.playerId));
-  const rows = parsed
+  const rows = response.parsed_output.impressions
     .filter(
-      (entry): entry is { playerId: string; impression: string } =>
-        typeof entry === "object" &&
-        entry !== null &&
-        typeof (entry as { playerId?: unknown }).playerId === "string" &&
-        knownIds.has((entry as { playerId: string }).playerId) &&
-        typeof (entry as { impression?: unknown }).impression === "string" &&
-        (entry as { impression: string }).impression.trim().length > 0,
+      (entry) => knownIds.has(entry.playerId) && entry.impression.trim().length > 0,
     )
     .map((entry) => ({
       player_id: entry.playerId,
