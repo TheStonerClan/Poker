@@ -6,8 +6,9 @@
   "startingStack": 500,
   "currency": "USD",
   "buyback": {
-    "_comment": "House rule: each player has ONE buyback token, spendable in two ways. (a) when busted within rebuy window: fresh 500-chip starting stack for $20. (b) at the 2nd color-up break (L8): add 500 chips on top of current stack for $20. Once spent in either way, no more. Track which mode it was redeemed as for analytics.",
-    "tokensPerPlayer": 1,
+    "_comment": "House rule: each player gets up to one rebuy AND up to one add-on — independent budgets, not shared. (a) when busted within rebuy window: fresh 500-chip starting stack for $20. (b) at the 2nd color-up break (L8): add 500 chips on top of current stack for $20. Each is capped at one use; using one doesn't affect the other.",
+    "rebuysPerPlayer": 1,
+    "addOnsPerPlayer": 1,
     "price": 20,
     "rebuyChips": 500,
     "rebuyAllowedThroughLevel": 6,

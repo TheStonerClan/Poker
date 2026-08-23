@@ -5,7 +5,6 @@ import { Headline } from "@/components/admin/HistoryBody";
 import LocalDateTime from "@/components/admin/LocalDateTime";
 import { SandboxBadge } from "@/components/SandboxBadge";
 import { TournamentRosterTable } from "@/app/history/_components/TournamentRosterTable";
-import { BASE_BOUNTY_AMOUNT } from "@/lib/bounty";
 import { formatMoney } from "@/lib/admin/format";
 import {
   buildPlayerTournamentHistory,
@@ -27,12 +26,6 @@ type TournamentDetail = {
   summary: TournamentSummaryRow;
   rows: PlayerTournamentRow[];
   timeline: TimelineEvent[];
-  bounty: {
-    amount: number;
-    isStacked: boolean;
-    targetName: string;
-    collectorName: string | null;
-  } | null;
 };
 
 async function loadTournamentDetail(args: {
@@ -45,7 +38,7 @@ async function loadTournamentDetail(args: {
   const { data: t } = await supabase
     .from("tournaments")
     .select(
-      "id, template_id, status, finished_at, started_at, buy_in_snapshot, current_level, rebuy_price_snapshot, buyback_config_snapshot, blind_structure_snapshot, bounty_target_player_id, bounty_amount, bounty_collected_by_player_id",
+      "id, template_id, status, finished_at, started_at, buy_in_snapshot, current_level, rebuy_price_snapshot, buyback_config_snapshot, blind_structure_snapshot",
     )
     .eq("id", tournamentId)
     .eq("status", "finished")
@@ -131,20 +124,7 @@ async function loadTournamentDetail(args: {
     levelLabel,
   });
 
-  let bounty: TournamentDetail["bounty"] = null;
-  if (tournament.bounty_target_player_id) {
-    const amount = Number(tournament.bounty_amount ?? BASE_BOUNTY_AMOUNT);
-    bounty = {
-      amount,
-      isStacked: amount > BASE_BOUNTY_AMOUNT,
-      targetName: nameByPlayerId.get(tournament.bounty_target_player_id) ?? "—",
-      collectorName: tournament.bounty_collected_by_player_id
-        ? (nameByPlayerId.get(tournament.bounty_collected_by_player_id) ?? "—")
-        : null,
-    };
-  }
-
-  return { summary, rows, timeline, bounty };
+  return { summary, rows, timeline };
 }
 
 /**
@@ -167,7 +147,7 @@ export default async function TournamentHistoryBody({
   const detail = await loadTournamentDetail({ supabase, tournamentId, isSandbox });
   if (!detail) notFound();
 
-  const { summary, rows, timeline, bounty } = detail;
+  const { summary, rows, timeline } = detail;
 
   return (
     <main className="flex min-h-screen flex-col bg-bg text-fg">
@@ -204,21 +184,6 @@ export default async function TournamentHistoryBody({
           <Headline label="Add-ons" value={summary.addOns.toString()} />
           <Headline label="Pool" value={formatMoney(summary.prizePool)} />
         </section>
-
-        {bounty ? (
-          <section className="rounded-md border border-gold/30 bg-gold/[0.04] p-4">
-            <p className="text-label mb-1 text-[10px] font-semibold uppercase tracking-[0.25em] text-gold/80">
-              Bounty
-            </p>
-            <p className="text-sm text-fg">
-              {formatMoney(bounty.amount)}
-              {bounty.isStacked ? " (stacked)" : ""} on {bounty.targetName} —{" "}
-              {bounty.collectorName
-                ? `collected by ${bounty.collectorName}`
-                : "unclaimed"}
-            </p>
-          </section>
-        ) : null}
 
         <section className="rounded-md border border-fg/10 p-4">
           <div className="mb-3 flex items-baseline justify-between gap-2">

@@ -35,8 +35,9 @@ export function aggregatePlayers(
 
   for (const r of rows) {
     // Prefer the per-row counters when present (added in 0003 to support
-    // configurable rebuy limits — a player can rebuy AND addon, or rebuy
-    // multiple times if tokensPerPlayer > 1). Fall back to the legacy
+    // configurable rebuy/add-on limits — a player can rebuy AND addon,
+    // since the two budgets are independent, or repeat either one if its
+    // per-player limit is raised above 1). Fall back to the legacy
     // most-recent-type fields when the counters are zero so historical
     // rows without backfill (or DBs that haven't run 0003 yet) still
     // aggregate correctly.

@@ -4,8 +4,6 @@ import { notFound } from "next/navigation";
 import { Headline, RangeFilter } from "@/components/admin/HistoryBody";
 import LocalDateTime from "@/components/admin/LocalDateTime";
 import { SandboxBadge } from "@/components/SandboxBadge";
-import { PlayerLink } from "@/app/history/_components/PlayerLink";
-import { BASE_BOUNTY_AMOUNT } from "@/lib/bounty";
 import { formatMoney } from "@/lib/admin/format";
 import {
   applyHistoryRange,
@@ -41,16 +39,6 @@ type PlayerChipStats = {
   tournamentsBelow: number;
 };
 
-type PlayerBountyRow = {
-  tournamentId: string;
-  finishedAt: string | null;
-  amount: number;
-  isStacked: boolean;
-  role: "target" | "collector";
-  otherPlayerId: string | null;
-  otherPlayerName: string | null;
-};
-
 type PlayerImpression = {
   text: string;
   generatedAt: string;
@@ -68,7 +56,6 @@ type PlayerProfile = {
   hasAnyGamesEver: boolean;
   stats: PlayerStatsRow | null;
   history: PlayerTournamentRow[];
-  bounties: PlayerBountyRow[];
   knockouts: PlayerKnockoutRow[];
   impression: PlayerImpression | null;
   chipStats: PlayerChipStats | null;
@@ -104,7 +91,7 @@ async function loadPlayerProfile(args: {
   const { data: finished } = await supabase
     .from("tournaments")
     .select(
-      "id, template_id, status, finished_at, started_at, buy_in_snapshot, current_level, rebuy_price_snapshot, buyback_config_snapshot, bounty_target_player_id, bounty_amount, bounty_collected_by_player_id",
+      "id, template_id, status, finished_at, started_at, buy_in_snapshot, current_level, rebuy_price_snapshot, buyback_config_snapshot",
     )
     .eq("status", "finished")
     .eq("is_sandbox", isSandbox)
@@ -118,7 +105,6 @@ async function loadPlayerProfile(args: {
       hasAnyGamesEver: false,
       stats: null,
       history: [],
-      bounties: [],
       knockouts: [],
       impression,
       chipStats: null,
@@ -148,7 +134,6 @@ async function loadPlayerProfile(args: {
       hasAnyGamesEver,
       stats: null,
       history: [],
-      bounties: [],
       knockouts: [],
       impression,
       chipStats: null,
@@ -265,90 +250,33 @@ async function loadPlayerProfile(args: {
         }
       : null;
 
-  // Bounty involvement within this range — tournaments where the
-  // player was either the target or the collector. Roster here only
-  // has this player's own row, so the OTHER party's name needs a
-  // small separate lookup.
-  const involved = tournaments.filter(
-    (t) =>
-      t.bounty_target_player_id === playerId ||
-      t.bounty_collected_by_player_id === playerId,
-  );
-  const otherIds = new Set<string>();
-  for (const t of involved) {
-    if (t.bounty_target_player_id && t.bounty_target_player_id !== playerId) {
-      otherIds.add(t.bounty_target_player_id);
-    }
-    if (
-      t.bounty_collected_by_player_id &&
-      t.bounty_collected_by_player_id !== playerId
-    ) {
-      otherIds.add(t.bounty_collected_by_player_id);
-    }
-  }
   // buildPlayerTournamentHistory can only resolve a knocker's name from
-  // `roster`, which here is scoped to this player alone — fold the
-  // unresolved ids into the same other-player lookup.
+  // `roster`, which here is scoped to this player alone — a small
+  // separate lookup fills in the other player's name.
+  const otherIds = new Set<string>();
   for (const h of history) {
     if (h.knockedOutByPlayerId && !h.knockedOutByName) {
       otherIds.add(h.knockedOutByPlayerId);
     }
   }
-  let otherNames = new Map<string, string>();
   if (otherIds.size > 0) {
     const { data: otherPlayers } = await supabase
       .from("players")
       .select("id, name")
       .in("id", [...otherIds]);
-    otherNames = new Map((otherPlayers ?? []).map((p) => [p.id, p.name]));
-  }
-  for (const h of history) {
-    if (h.knockedOutByPlayerId && !h.knockedOutByName) {
-      h.knockedOutByName = otherNames.get(h.knockedOutByPlayerId) ?? null;
+    const otherNames = new Map((otherPlayers ?? []).map((p) => [p.id, p.name]));
+    for (const h of history) {
+      if (h.knockedOutByPlayerId && !h.knockedOutByName) {
+        h.knockedOutByName = otherNames.get(h.knockedOutByPlayerId) ?? null;
+      }
     }
   }
-
-  const bounties: PlayerBountyRow[] = [];
-  for (const t of involved) {
-    const amount = Number(t.bounty_amount ?? BASE_BOUNTY_AMOUNT);
-    const isStacked = amount > BASE_BOUNTY_AMOUNT;
-    if (t.bounty_target_player_id === playerId) {
-      const collectorId = t.bounty_collected_by_player_id ?? null;
-      bounties.push({
-        tournamentId: t.id,
-        finishedAt: t.finished_at,
-        amount,
-        isStacked,
-        role: "target",
-        otherPlayerId: collectorId,
-        otherPlayerName: collectorId ? (otherNames.get(collectorId) ?? "—") : null,
-      });
-    }
-    if (t.bounty_collected_by_player_id === playerId) {
-      const targetId = t.bounty_target_player_id ?? null;
-      bounties.push({
-        tournamentId: t.id,
-        finishedAt: t.finished_at,
-        amount,
-        isStacked,
-        role: "collector",
-        otherPlayerId: targetId,
-        otherPlayerName: targetId ? (otherNames.get(targetId) ?? "—") : null,
-      });
-    }
-  }
-  bounties.sort((a, b) => {
-    const at = a.finishedAt ? Date.parse(a.finishedAt) : 0;
-    const bt = b.finishedAt ? Date.parse(b.finishedAt) : 0;
-    return bt - at;
-  });
 
   return {
     playerName: playerRow.name,
     hasAnyGamesEver,
     stats,
     history,
-    bounties,
     knockouts,
     impression,
     chipStats,
@@ -382,7 +310,7 @@ export default async function PlayerHistoryBody({
   if (!profile) notFound();
 
   const ownPath = `${listBasePath}/${playerId}`;
-  const { stats, history, bounties, knockouts, impression, chipStats } = profile;
+  const { stats, history, knockouts, impression, chipStats } = profile;
 
   return (
     <main className="flex min-h-screen flex-col bg-bg text-fg">
@@ -511,57 +439,6 @@ export default async function PlayerHistoryBody({
                     value={`${chipStats.avgRatio.toFixed(2)}×`}
                   />
                 </dl>
-              </section>
-            ) : null}
-
-            {bounties.length > 0 ? (
-              <section className="rounded-md border border-fg/10 p-4">
-                <h2 className="text-label mb-3 text-[11px] font-semibold uppercase tracking-[0.25em]">
-                  Bounty history
-                </h2>
-                <ul className="flex flex-col gap-1.5">
-                  {bounties.map((b) => (
-                    <li
-                      key={`${b.tournamentId}-${b.role}`}
-                      className="flex items-baseline justify-between gap-2 px-2 py-1 text-xs"
-                    >
-                      <span className="text-fg/55">
-                        <LocalDateTime iso={b.finishedAt} /> ·{" "}
-                        {formatMoney(b.amount)}
-                        {b.isStacked ? (
-                          <span className="ml-1 text-gold/80">stacked</span>
-                        ) : null}
-                      </span>
-                      <span className="font-mono tabular-nums text-fg/70">
-                        {b.role === "collector" ? (
-                          <>
-                            collected off{" "}
-                            {b.otherPlayerId && b.otherPlayerName ? (
-                              <PlayerLink
-                                basePath={listBasePath}
-                                playerId={b.otherPlayerId}
-                                name={b.otherPlayerName}
-                              />
-                            ) : (
-                              "—"
-                            )}
-                          </>
-                        ) : b.otherPlayerId && b.otherPlayerName ? (
-                          <>
-                            collected by{" "}
-                            <PlayerLink
-                              basePath={listBasePath}
-                              playerId={b.otherPlayerId}
-                              name={b.otherPlayerName}
-                            />
-                          </>
-                        ) : (
-                          "unclaimed"
-                        )}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
               </section>
             ) : null}
 
