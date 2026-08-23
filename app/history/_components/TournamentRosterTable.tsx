@@ -41,7 +41,9 @@ export function TournamentRosterTable({ rows, basePath }: Props) {
       render: (r) => (
         <span className="font-mono tabular-nums text-fg">
           {r.position != null
-            ? ordinal(r.position)
+            ? r.isChopped
+              ? "1st (tied)"
+              : ordinal(r.position)
             : r.bustedAtLevel != null
               ? `Out L${r.bustedAtLevel}`
               : "—"}

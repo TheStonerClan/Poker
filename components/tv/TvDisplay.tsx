@@ -3,7 +3,6 @@
 import { QRCodeSVG } from "qrcode.react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { BASE_BOUNTY_AMOUNT } from "@/lib/bounty";
 import { formatBlinds } from "@/lib/tv/format";
 
 import BlindLevel from "@/components/tv/BlindLevel";
@@ -352,32 +351,7 @@ export default function TvDisplay({
     buybacks: totalBuybacks,
   });
 
-  // Bounty against the highest-placed returning player from the prior
-  // tournament, resolved once at creation and persisted on the row (see
-  // lib/admin/bounty.ts). `bountyAmount` is the TOTAL a busting player
-  // collects — it can be more than BASE_BOUNTY_AMOUNT if it stacked from
-  // an unclaimed prior week. But only BASE_BOUNTY_AMOUNT ever comes out
-  // of any single week's pool; a stacked portion was already deducted
-  // from a prior week's pool and just carries over untouched. Applied
-  // for the whole night once a target was resolvable, regardless of
-  // whether it's been collected yet, since the deduction reflects money
-  // set aside, not money paid.
-  const bountyTargetId = tournament.bounty_target_player_id;
-  const bountyAmount = tournament.bounty_amount ?? 0;
-  const bountyDeduction = bountyTargetId
-    ? Math.min(BASE_BOUNTY_AMOUNT, rawPool)
-    : 0;
-  const bountyTarget = bountyTargetId
-    ? (playerNameById.get(bountyTargetId) ?? null)
-    : null;
-  const bountyCollectedBy = tournament.bounty_collected_by_player_id
-    ? (playerNameById.get(tournament.bounty_collected_by_player_id) ?? null)
-    : null;
-
-  const { payouts, effectivePool } = computePayouts(
-    prizeRules,
-    rawPool - bountyDeduction,
-  );
+  const { payouts, effectivePool } = computePayouts(prizeRules, rawPool);
 
   const denominations =
     (tournament.chip_denominations_snapshot as unknown as ChipDenomination[]) ?? [];
@@ -530,19 +504,7 @@ export default function TvDisplay({
             final-table roster (max 9) instead — the column has the room
             for it once it's not sharing space with other tables' cards. */}
         <div className="flex flex-col items-end gap-[clamp(0.75rem,1.5vh,1.5rem)] justify-self-end w-full max-w-[18rem]">
-          <PrizePool
-            totalPool={effectivePool}
-            payouts={payouts}
-            bounty={
-              bountyTargetId
-                ? {
-                    amount: bountyAmount,
-                    targetName: bountyTarget,
-                    collectedByName: bountyCollectedBy,
-                  }
-                : null
-            }
-          />
+          <PrizePool totalPool={effectivePool} payouts={payouts} />
           {perTableLeaderboards.length > 1 ? (
             <TableLeaders stats={tableStats} bigBlind={currentLevel?.big} />
           ) : perTableLeaderboards.length === 1 ? (

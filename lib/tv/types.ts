@@ -37,7 +37,12 @@ export type PrizeRules = {
 };
 
 export type BuybackConfig = {
-  tokensPerPlayer?: number;
+  /**
+   * Rebuy and add-on are independent budgets — using one doesn't consume
+   * the other. Each defaults to 1 (one rebuy, one add-on per player).
+   */
+  rebuysPerPlayer?: number;
+  addOnsPerPlayer?: number;
   price?: number;
   rebuyChips?: number;
   rebuyAllowedThroughLevel?: number;

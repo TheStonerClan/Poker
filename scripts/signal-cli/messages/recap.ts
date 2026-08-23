@@ -11,6 +11,12 @@ export interface RecapPodiumEntry {
   name: string;
   /** Payout in whole dollars. */
   payout: number;
+  /**
+   * True when this position was part of a 1st/2nd chop — always set on
+   * BOTH place 1 and place 2 together (chop never applies to just one).
+   * Changes "Winner:" to name both tied players instead of just place 1.
+   */
+  isChopped?: boolean;
 }
 
 export interface RecapFunFacts {
@@ -113,18 +119,28 @@ export function buildRecapMessage(input: RecapInput): string {
   }).format(date);
 
   const sortedPodium = [...podium].sort((a, b) => a.place - b.place);
-  const winner = sortedPodium.find((p) => p.place === 1);
+  // A chop ties 1st and 2nd — both entries carry isChopped, so name both
+  // as winners instead of just whoever landed in position 1.
+  const winners = sortedPodium.filter(
+    (p) => p.place === 1 || (p.place === 2 && p.isChopped),
+  );
 
   const lines: string[] = [];
   lines.push(`🏆 ${tournamentName} · Recap`);
   lines.push(`📅 ${day}, ${md}`);
   lines.push('');
-  if (winner) lines.push(`Winner: ${winner.name} 🎉`);
+  if (winners.length > 1) {
+    lines.push(`Tied for 1st: ${winners.map((w) => w.name).join(' & ')} 🎉`);
+  } else if (winners.length === 1) {
+    lines.push(`Winner: ${winners[0].name} 🎉`);
+  }
   lines.push(`Prize pool: ${usd(prizePool)} (${entries} entries)`);
   lines.push('');
   lines.push('Podium');
   for (const p of sortedPodium) {
-    lines.push(`${MEDALS[p.place]} ${p.name} — ${usd(p.payout)}`);
+    const medal = p.isChopped && p.place <= 2 ? MEDALS[1] : MEDALS[p.place];
+    const tie = p.isChopped && p.place <= 2 ? ' (tied)' : '';
+    lines.push(`${medal} ${p.name}${tie} — ${usd(p.payout)}`);
   }
 
   const factLines: string[] = [];

@@ -64,8 +64,9 @@ export default async function AdminDashboardBody({
 
   const inPlay = roster.filter((r) => !r.busted_at_time);
   // Count actual buybacks (rebuys + addons) using the per-row counters
-  // added in 0003. With tokensPerPlayer>1 a single roster row can carry
-  // multiple paid entries, so a `filter(buyback_used).length` would
+  // added in 0003. Rebuy and add-on are independent budgets, so a single
+  // roster row can carry both, or repeat either one if its per-player
+  // limit is raised above 1 — a `filter(buyback_used).length` would
   // undercount the prize-pool contribution.
   const buybacks = roster.reduce(
     (s, r) => s + (r.rebuys_used ?? 0) + (r.addons_used ?? 0),

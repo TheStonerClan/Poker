@@ -59,12 +59,13 @@ select
   null,                                       -- recurrence_rule TBD; manual scheduling for now
   20,
   500,
-  1,                                          -- one buyback token per player
+  1,                                          -- max_rebuys: legacy/unenforced column; buyback_config below is authoritative
   20,
   500,
   'BB',
   jsonb_build_object(
-    'tokensPerPlayer', 1,
+    'rebuysPerPlayer', 1,
+    'addOnsPerPlayer', 1,
     'price', 20,
     'rebuyChips', 500,
     'rebuyAllowedThroughLevel', 6,

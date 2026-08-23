@@ -19,7 +19,6 @@ import {
 } from "@/lib/admin/chip-snapshots";
 import { formatAuditDescription, type AuditLogEntry } from "@/lib/admin/audit-log";
 import { formatBlinds, formatChips, formatMoney } from "@/lib/admin/format";
-import { BASE_BOUNTY_AMOUNT } from "@/lib/bounty";
 import { createClient } from "@/lib/supabase/server";
 import { formatLevelLabel, levelCounts } from "@/lib/tv/levels";
 import { computePayouts } from "prize-math";
@@ -35,7 +34,6 @@ import {
 import { AutoAdvanceWatcher } from "../../_components/AutoAdvanceWatcher";
 import { LevelControls } from "../../_components/LevelControls";
 import { AuditLog } from "./_components/AuditLog";
-import { BountyPanel } from "./_components/BountyPanel";
 import { PlayerGrid } from "./_components/PlayerGrid";
 import { ColorUpInbox } from "./_components/ColorUpInbox";
 import { DeleteTournamentButton } from "./_components/DeleteTournamentButton";
@@ -179,25 +177,12 @@ export default async function LiveTournamentPage({
   const inPlay = roster.filter((r) => !r.busted_at_time);
   const out = roster.filter((r) => r.busted_at_time);
   // Total buybacks = rebuys + add-ons across all players (counters added
-  // in 0003 to support tokensPerPlayer > 1). A single roster row may
-  // contribute multiple paid entries.
+  // in 0003). Rebuy and add-on are independent budgets, so a single
+  // roster row may contribute multiple paid entries.
   const buybacks = roster.reduce(
     (s, r) => s + (r.rebuys_used ?? 0) + (r.addons_used ?? 0),
     0,
   );
-
-  // Bounty deduction mirrors performFinalize()'s: only BASE_BOUNTY_AMOUNT
-  // ever comes out of a single tournament's pool, even when
-  // tournament.bounty_amount (the total a busting player collects) is
-  // larger from stacking — the stacked portion was already deducted
-  // from a prior tournament's pool. Expressed as rakePerEntry so this
-  // projection matches what actually gets paid out at finalize.
-  const bountyEntries = roster.length + buybacks;
-  const bountyDeduction = tournament.bounty_target_player_id
-    ? Math.min(BASE_BOUNTY_AMOUNT, bountyEntries * tournament.buy_in_snapshot)
-    : 0;
-  const bountyRakePerEntry =
-    bountyEntries > 0 ? bountyDeduction / bountyEntries : 0;
 
   const payouts = computePayouts(
     tournament.prize_rules_snapshot as Parameters<typeof computePayouts>[0],
@@ -205,18 +190,9 @@ export default async function LiveTournamentPage({
       buyIns: roster.length,
       buybacks,
       buyInPrice: tournament.buy_in_snapshot,
-      rakePerEntry: bountyRakePerEntry,
+      rakePerEntry: 0,
     },
   );
-
-  const bountyTargetRow = tournament.bounty_target_player_id
-    ? roster.find((r) => r.player_id === tournament.bounty_target_player_id)
-    : undefined;
-  const bountyCollectedByRow = tournament.bounty_collected_by_player_id
-    ? roster.find(
-        (r) => r.player_id === tournament.bounty_collected_by_player_id,
-      )
-    : undefined;
 
   const buybackCfg = tournament.buyback_config_snapshot as {
     rebuyAllowedThroughLevel?: number;
@@ -591,11 +567,12 @@ export default async function LiveTournamentPage({
             <PlayerGrid
               currentLevel={tournament.current_level}
               buybackConfig={buybackCfg}
-              knockoutCandidates={roster
+              knockoutCandidates={inPlay
                 .filter((r) => r.player_id)
                 .map((r) => ({
                   playerId: r.player_id as string,
                   name: r.player?.name ?? "—",
+                  tableNumber: r.table_number,
                 }))}
               rows={out.map((r) => ({
                 id: r.id,
@@ -606,6 +583,7 @@ export default async function LiveTournamentPage({
                 buybackUsed: r.buyback_used,
                 buybackUsedAs: r.buyback_used_as,
                 playerId: r.player_id,
+                tableNumber: r.table_number,
                 knockedOutByPlayerId: r.knocked_out_by_player_id,
                 knockedOutByName: r.knocked_out_by_player_id
                   ? (playerNameByPlayerId.get(r.knocked_out_by_player_id) ?? null)
@@ -616,23 +594,6 @@ export default async function LiveTournamentPage({
               }))}
             />
           </section>
-        ) : null}
-
-        {bountyTargetRow ? (
-          <BountyPanel
-            tournamentId={tournament.id}
-            targetName={bountyTargetRow.player?.name ?? "—"}
-            amount={tournament.bounty_amount ?? 20}
-            targetBusted={Boolean(bountyTargetRow.busted_at_time)}
-            collectedByName={bountyCollectedByRow?.player?.name ?? null}
-            activePlayers={inPlay
-              .filter((r) => r.player_id !== bountyTargetRow.player_id)
-              .map((r) => ({
-                playerId: r.player_id ?? "",
-                name: r.player?.name ?? "—",
-              }))
-              .filter((p) => p.playerId !== "")}
-          />
         ) : null}
 
         <section className="rounded-lg border border-fg/10 p-4">

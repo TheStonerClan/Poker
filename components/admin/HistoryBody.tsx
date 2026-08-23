@@ -6,7 +6,6 @@ import { SandboxBadge } from "@/components/SandboxBadge";
 import { formatChips, formatMoney } from "@/lib/admin/format";
 import {
   applyHistoryRange,
-  buildBountyLedger,
   buildBreakShiftStats,
   buildBustHistogram,
   buildKnockoutLedger,
@@ -68,7 +67,7 @@ export default async function HistoryBody({
   const { data: tournamentsData } = await supabase
     .from("tournaments")
     .select(
-      "id, template_id, status, finished_at, started_at, buy_in_snapshot, current_level, rebuy_price_snapshot, buyback_config_snapshot, blind_structure_snapshot, bounty_target_player_id, bounty_amount, bounty_collected_by_player_id",
+      "id, template_id, status, finished_at, started_at, buy_in_snapshot, current_level, rebuy_price_snapshot, buyback_config_snapshot, blind_structure_snapshot",
     )
     .eq("status", "finished")
     .eq("is_sandbox", isSandbox)
@@ -221,11 +220,6 @@ export default async function HistoryBody({
     roster,
     events: snapshotEvents,
   });
-  const bountyLedger = buildBountyLedger({ tournaments, roster });
-  const BOUNTY_LEDGER_MAX = 3;
-  const bountyLedgerVisible = bountyLedger.slice(0, BOUNTY_LEDGER_MAX);
-  const bountyLedgerHiddenCount = bountyLedger.length - bountyLedgerVisible.length;
-
   const knockoutLedger = buildKnockoutLedger({ tournaments, roster });
   const KNOCKOUT_LEDGER_MAX = 3;
   const knockoutLedgerVisible = knockoutLedger.slice(0, KNOCKOUT_LEDGER_MAX);
@@ -258,29 +252,6 @@ export default async function HistoryBody({
   const addOnLeaders = [...playerStats]
     .filter((p) => p.totalAddOns > 0)
     .sort((a, b) => b.totalAddOns - a.totalAddOns)
-    .slice(0, 5);
-
-  // Bounty collector cohort — how many times each player has cashed
-  // in someone else's bounty. Built from the ledger rather than
-  // playerStats since it's the only place this count exists.
-  const bountyCollectorCounts = new Map<
-    string,
-    { name: string; count: number; total: number }
-  >();
-  for (const b of bountyLedger) {
-    if (!b.collectorPlayerId || !b.collectorName) continue;
-    const acc = bountyCollectorCounts.get(b.collectorPlayerId) ?? {
-      name: b.collectorName,
-      count: 0,
-      total: 0,
-    };
-    acc.count += 1;
-    acc.total += b.amount;
-    bountyCollectorCounts.set(b.collectorPlayerId, acc);
-  }
-  const bountyHunters = [...bountyCollectorCounts.entries()]
-    .map(([id, v]) => ({ id, ...v }))
-    .sort((a, b) => b.count - a.count || b.total - a.total)
     .slice(0, 5);
 
   // Break-shift cohorts. Each row in breakShifts is already one distinct
@@ -426,82 +397,6 @@ export default async function HistoryBody({
           ) : null}
         </ol>
       </section>
-
-      {/* Bounty ledger — the running story of who's collected on whom.
-          Gated on there being any bounty at all (early tournaments
-          have none: no prior finished tournament to resolve one from). */}
-      {bountyLedger.length > 0 ? (
-        <section className="rounded-md border border-fg/10 p-4">
-          <h2 className="text-label mb-3 text-[11px] font-semibold uppercase tracking-[0.25em]">
-            Bounties
-          </h2>
-          {bountyHunters.length > 0 ? (
-            <ol className="mb-3 flex flex-col gap-1">
-              {bountyHunters.map((h, i) => (
-                <li
-                  key={h.id}
-                  className="flex items-baseline justify-between gap-2 px-2 py-1 text-sm"
-                >
-                  <div className="flex items-baseline gap-3">
-                    <span className="font-mono w-6 tabular-nums text-fg/55 text-xs">
-                      {i + 1}
-                    </span>
-                    <PlayerLink basePath={basePath} playerId={h.id} name={h.name} />
-                  </div>
-                  <div className="flex items-baseline gap-3 font-mono text-xs tabular-nums text-fg/55">
-                    <span>
-                      {h.count} bount{h.count === 1 ? "y" : "ies"}
-                    </span>
-                    <span className="text-fg w-16 text-right">
-                      {formatMoney(h.total)}
-                    </span>
-                  </div>
-                </li>
-              ))}
-            </ol>
-          ) : null}
-          <ul className="flex flex-col gap-1.5 border-t border-fg/10 pt-2">
-            {bountyLedgerVisible.map((b) => (
-              <li
-                key={b.tournamentId}
-                className="flex items-baseline justify-between gap-2 px-2 py-1 text-xs"
-              >
-                <span className="text-fg/55">
-                  <LocalDateTime iso={b.finishedAt} /> · {formatMoney(b.amount)}
-                  {b.isStacked ? (
-                    <span className="ml-1 text-gold/80">stacked</span>
-                  ) : null}{" "}
-                  on{" "}
-                  <PlayerLink
-                    basePath={basePath}
-                    playerId={b.targetPlayerId}
-                    name={b.targetName}
-                  />
-                </span>
-                <span className="font-mono tabular-nums text-fg/70">
-                  {b.collectorName && b.collectorPlayerId ? (
-                    <>
-                      collected by{" "}
-                      <PlayerLink
-                        basePath={basePath}
-                        playerId={b.collectorPlayerId}
-                        name={b.collectorName}
-                      />
-                    </>
-                  ) : (
-                    "unclaimed"
-                  )}
-                </span>
-              </li>
-            ))}
-          </ul>
-          {bountyLedgerHiddenCount > 0 ? (
-            <p className="mt-2 text-[10px] uppercase tracking-widest text-fg/40">
-              +{bountyLedgerHiddenCount} more
-            </p>
-          ) : null}
-        </section>
-      ) : null}
 
       {/* Knockout ledger — the running story of who busted whom. Gated
           on there being any recorded knockout (it's an admin/table
@@ -694,7 +589,9 @@ export default async function HistoryBody({
                 </div>
                 <div className="mt-1 flex items-baseline justify-between gap-2 text-xs text-fg/60">
                   <p>
-                    {t.winnerName ? `Winner: ${t.winnerName}` : "—"}
+                    {t.winnerName
+                      ? `${t.chopped ? "Tied for 1st" : "Winner"}: ${t.winnerName}`
+                      : "—"}
                     {t.chopped ? (
                       <span className="ml-1.5 rounded-full border border-gold/50 px-1.5 py-px text-[9px] uppercase tracking-wider text-gold/80">
                         chop

@@ -98,6 +98,12 @@ export function buildTournamentTimeline(args: {
           description = `Tables merged (${num(p, "moved") ?? 0} players moved)`;
         } else if (kind === "seat_confirmation") {
           description = `Seating confirmed at table ${num(p, "table_number") ?? "?"}`;
+        } else if (kind === "bounty_retired_credit") {
+          const creditedId = str(p, "credited_player_id");
+          const credited = creditedId
+            ? (nameByPlayerId.get(creditedId) ?? "someone")
+            : "someone";
+          description = `Bounty program retired — ${formatMoney(num(p, "amount") ?? 0)} credited to ${credited} as winnings`;
         } else {
           description = "Admin note";
         }

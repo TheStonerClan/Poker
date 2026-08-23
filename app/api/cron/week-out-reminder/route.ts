@@ -15,6 +15,7 @@ import { NextResponse } from "next/server";
 
 import { createServiceClient } from "@/lib/supabase/service";
 import { resolveNextNight } from "@/lib/schedule/server";
+import { toIsoDate } from "@/lib/schedule/next-night";
 import {
   isValidHhMm,
   isValidTimezone,
@@ -140,7 +141,12 @@ async function runCron(req: Request): Promise<NextResponse> {
       new Date(now.getTime() + DAYS_BEFORE * 86_400_000),
       timezone,
     );
-    const effectiveYmd = localDateInTz(resolved.next.effectiveDate, timezone);
+    // `effectiveDate` is a plain calendar date (local-midnight Date built
+    // from Y/M/D components by the resolver, not a real zoned instant) —
+    // pull the fields back out directly instead of running it through
+    // localDateInTz, which would reinterpret it as a UTC instant and
+    // roll it back a day for any zone west of UTC (e.g. Fri -> Thu in CT).
+    const effectiveYmd = toIsoDate(resolved.next.effectiveDate);
 
     if (effectiveYmd !== targetYmd) {
       skip(`not week-out (next=${effectiveYmd}, target=${targetYmd})`);

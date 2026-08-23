@@ -6,7 +6,6 @@ import { z } from "zod";
 
 import { requireAdmin } from "@/lib/auth";
 import { requireManagePlayerSlot } from "@/lib/auth/table-admin";
-import { BASE_BOUNTY_AMOUNT } from "@/lib/bounty";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { refreshAllPlayerImpressions } from "@/lib/admin/impressions";
@@ -322,9 +321,8 @@ const RecordKnockoutSchema = z.object({
 /**
  * Record who busted a player. Same actor gate as bustPlayer itself
  * (admin, or the table admin for that player's table) — this is
- * correcting/completing the bust, not a financial action like the
- * bounty collector. Change-of-mind just calls this again; there's no
- * separate "already recorded" guard, matching collectBounty.
+ * correcting/completing the bust, not a financial action. Change-of-mind
+ * just calls this again; there's no separate "already recorded" guard.
  */
 export async function recordKnockout(input: {
   tournamentPlayerId: string;
@@ -436,116 +434,6 @@ async function runAdminAction(
   }
 }
 
-const CollectBountySchema = z.object({
-  tournamentId: z.uuid(),
-  collectedByPlayerId: z.uuid(),
-});
-
-/**
- * Record who busted the resolved bounty target. Admin-only (this is a
- * financial credit, like rebuy/addon). Idempotent-ish: re-collecting just
- * overwrites who gets credit, which is fine for a mid-night correction —
- * there's no separate "uncollect".
- */
-export async function collectBounty(input: {
-  tournamentId: string;
-  collectedByPlayerId: string;
-}): Promise<AdminActionResult> {
-  return runAdminAction(async () => {
-    await requireAdmin();
-    const { tournamentId, collectedByPlayerId } =
-      CollectBountySchema.parse(input);
-    const supabase = await createClient();
-
-    const { data: t } = await supabase
-      .from("tournaments")
-      .select("bounty_target_player_id, bounty_amount")
-      .eq("id", tournamentId)
-      .maybeSingle();
-    if (!t) throw new Error("Tournament not found");
-    if (!t.bounty_target_player_id) {
-      throw new Error("No bounty is active for this tournament.");
-    }
-
-    const { error } = await supabase
-      .from("tournaments")
-      .update({ bounty_collected_by_player_id: collectedByPlayerId })
-      .eq("id", tournamentId);
-    if (error) throw new Error(error.message);
-
-    await supabase.from("tournament_events").insert({
-      tournament_id: tournamentId,
-      type: "bounty_collected",
-      payload: {
-        target_player_id: t.bounty_target_player_id,
-        collected_by_player_id: collectedByPlayerId,
-        amount: t.bounty_amount,
-      },
-    });
-
-    await refresh(tournamentId);
-  });
-}
-
-const ReopenBountySchema = z.object({
-  tournamentId: z.uuid(),
-});
-
-/**
- * Clear a mistaken bounty collection — either "wrong player, I need to
- * fix who" (handled by just calling collectBounty again with the right
- * id) or "this shouldn't have been marked collected at all." Reverts
- * the bounty to open/unclaimed; the admin re-records it (or not) from
- * there. Logged as an `undo` event referencing the most recent
- * bounty_collected event, matching how bust/rebuy/addon/chip_adjust
- * undos are recorded — tournament_events is append-only, so this is a
- * compensating insert, not a mutation of the original.
- */
-export async function reopenBounty(input: {
-  tournamentId: string;
-}): Promise<AdminActionResult> {
-  return runAdminAction(async () => {
-    await requireAdmin();
-    const { tournamentId } = ReopenBountySchema.parse(input);
-    const supabase = await createClient();
-
-    const { data: t } = await supabase
-      .from("tournaments")
-      .select("bounty_collected_by_player_id")
-      .eq("id", tournamentId)
-      .maybeSingle();
-    if (!t) throw new Error("Tournament not found");
-    if (!t.bounty_collected_by_player_id) {
-      throw new Error("The bounty isn't marked collected.");
-    }
-
-    const { data: lastCollected } = await supabase
-      .from("tournament_events")
-      .select("id")
-      .eq("tournament_id", tournamentId)
-      .eq("type", "bounty_collected")
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    const { error } = await supabase
-      .from("tournaments")
-      .update({ bounty_collected_by_player_id: null })
-      .eq("id", tournamentId);
-    if (error) throw new Error(error.message);
-
-    await supabase.from("tournament_events").insert({
-      tournament_id: tournamentId,
-      type: "undo",
-      payload: {
-        undone_event_id: lastCollected?.id ?? null,
-        undone_type: "bounty_collected",
-      },
-    });
-
-    await refresh(tournamentId);
-  });
-}
 
 export async function rebuyPlayer(input: {
   tournamentPlayerId: string;
@@ -576,29 +464,22 @@ export async function rebuyPlayer(input: {
     const cfg = (t?.buyback_config_snapshot ?? {}) as {
       rebuyAllowedThroughLevel?: number;
       rebuyChips?: number;
-      tokensPerPlayer?: number;
+      rebuysPerPlayer?: number;
     };
 
-    // Token limit: rebuys + addons combined cannot exceed tokensPerPlayer.
-    // Default 1 (the legacy single-token rule). When the new counters
-    // aren't present (DB without 0003), fall back to the boolean flag.
-    const tokensPerPlayer = Math.max(1, cfg.tokensPerPlayer ?? 1);
+    // Rebuy limit is independent of add-ons — using an add-on doesn't
+    // touch this budget. Default 1. When the counter isn't present (DB
+    // without 0003), fall back to the legacy boolean flag.
+    const rebuysPerPlayer = Math.max(1, cfg.rebuysPerPlayer ?? 1);
     const rebuysUsed =
       typeof tp.rebuys_used === "number"
         ? tp.rebuys_used
         : tp.buyback_used && tp.buyback_used_as === "rebuy"
           ? 1
           : 0;
-    const addonsUsed =
-      typeof tp.addons_used === "number"
-        ? tp.addons_used
-        : tp.buyback_used && tp.buyback_used_as === "addon"
-          ? 1
-          : 0;
-    const tokensSpent = rebuysUsed + addonsUsed;
-    if (tokensSpent >= tokensPerPlayer) {
+    if (rebuysUsed >= rebuysPerPlayer) {
       throw new Error(
-        `Buyback limit reached (${tokensSpent} of ${tokensPerPlayer} used).`,
+        `Rebuy limit reached (${rebuysUsed} of ${rebuysPerPlayer} used).`,
       );
     }
 
@@ -708,8 +589,8 @@ export async function rebuyPlayer(input: {
         player_id: tp.player_id,
         at_level: t?.current_level ?? null,
         chips,
-        tokens_spent_after: tokensSpent + 1,
-        tokens_per_player: tokensPerPlayer,
+        rebuys_used_after: rebuysUsed + 1,
+        rebuys_per_player: rebuysPerPlayer,
         table_number: chosenTable,
         seat_number: chosenSeat,
       },
@@ -743,26 +624,22 @@ export async function applyAddOn(input: {
     const cfg = (t?.buyback_config_snapshot ?? {}) as {
       addOnAtBreakLevel?: number;
       addOnChips?: number;
-      tokensPerPlayer?: number;
+      addOnsPerPlayer?: number;
     };
 
-    const tokensPerPlayer = Math.max(1, cfg.tokensPerPlayer ?? 1);
-    const rebuysUsed =
-      typeof tp.rebuys_used === "number"
-        ? tp.rebuys_used
-        : tp.buyback_used && tp.buyback_used_as === "rebuy"
-          ? 1
-          : 0;
+    // Add-on limit is independent of rebuys — using a rebuy doesn't touch
+    // this budget. Default 1. When the counter isn't present (DB without
+    // 0003), fall back to the legacy boolean flag.
+    const addOnsPerPlayer = Math.max(1, cfg.addOnsPerPlayer ?? 1);
     const addonsUsed =
       typeof tp.addons_used === "number"
         ? tp.addons_used
         : tp.buyback_used && tp.buyback_used_as === "addon"
           ? 1
           : 0;
-    const tokensSpent = rebuysUsed + addonsUsed;
-    if (tokensSpent >= tokensPerPlayer) {
+    if (addonsUsed >= addOnsPerPlayer) {
       throw new Error(
-        `Buyback limit reached (${tokensSpent} of ${tokensPerPlayer} used).`,
+        `Add-on limit reached (${addonsUsed} of ${addOnsPerPlayer} used).`,
       );
     }
     if (
@@ -803,8 +680,8 @@ export async function applyAddOn(input: {
         player_id: tp.player_id,
         at_level: t?.current_level ?? null,
         chips_added: addChips,
-        tokens_spent_after: tokensSpent + 1,
-        tokens_per_player: tokensPerPlayer,
+        addons_used_after: addonsUsed + 1,
+        addons_per_player: addOnsPerPlayer,
       },
     });
 
@@ -1053,7 +930,7 @@ async function performFinalize(
   const { data: t } = await supabase
     .from("tournaments")
     .select(
-      "id, prize_rules_snapshot, buy_in_snapshot, status, finished_at, is_sandbox, bounty_target_player_id, bounty_amount",
+      "id, prize_rules_snapshot, buy_in_snapshot, status, finished_at, is_sandbox",
     )
     .eq("id", tournamentId)
     .maybeSingle();
@@ -1151,35 +1028,24 @@ async function performFinalize(
     .eq("tournament_id", tournamentId);
   const rankedPlayers = rankedRoster ?? players;
   // Sum the per-player counters so buybacks reflects actual paid entries
-  // when tokensPerPlayer > 1. The counter columns default to 0 and the
-  // 0003 backfill set them to 1 for legacy rows that already had
-  // buyback_used=true, so this is correct for both old and new data.
+  // — rebuy and add-on are independent budgets, so a player can have
+  // both. The counter columns default to 0 and the 0003 backfill set
+  // them to 1 for legacy rows that already had buyback_used=true, so
+  // this is correct for both old and new data.
   const buybacks = players.reduce(
     (s, p) => s + (p.rebuys_used ?? 0) + (p.addons_used ?? 0),
     0,
   );
 
-  // Bounty deduction: only BASE_BOUNTY_AMOUNT ever comes out of a single
-  // tournament's pool, even when t.bounty_amount (the total a busting
-  // player collects) is larger from stacking — the stacked portion was
-  // already deducted from a prior tournament's pool and just carries
-  // over. prize-math's Pool has no flat side-pot hook, only a per-entry
-  // rake, so the flat amount is expressed as rakePerEntry = amount /
-  // entries — entries * (amount / entries) nets out to exactly `amount`
-  // off the top, matching the live TV estimate in TvDisplay.tsx.
-  const entries = players.length + buybacks;
-  const bountyDeduction = t.bounty_target_player_id
-    ? Math.min(BASE_BOUNTY_AMOUNT, entries * t.buy_in_snapshot)
-    : 0;
-  const rakePerEntry = entries > 0 ? bountyDeduction / entries : 0;
-
+  // Bounty program retired — the pool is no longer carved down for a
+  // side-pot, so every entry's buy-in goes straight into the payouts.
   const payouts = computePayouts(
     t.prize_rules_snapshot as Parameters<typeof computePayouts>[0],
     {
       buyIns: players.length,
       buybacks,
       buyInPrice: t.buy_in_snapshot,
-      rakePerEntry,
+      rakePerEntry: 0,
     },
   );
 
@@ -2260,7 +2126,6 @@ export async function undoEvent(input: {
         .select("rebuys_used, addons_used, buyback_used_as")
         .eq("id", tournamentPlayerId)
         .maybeSingle();
-      const tokensSpentAfter = (payload.tokens_spent_after as number | undefined) ?? 1;
 
       const update: TablesUpdate<"tournament_players"> = {
         busted_at_time: priorBust ? priorBust.created_at : new Date().toISOString(),
@@ -2275,10 +2140,18 @@ export async function undoEvent(input: {
             | null
             | undefined) ?? null,
       };
+      // Rebuy and add-on are independent budgets now, so re-derive the
+      // shared legacy buyback_used/buyback_used_as flags from BOTH
+      // counters rather than trusting the event payload's old single
+      // shared-pool "tokens_spent_after" — a player can have used the
+      // other type too, and undoing this rebuy shouldn't erase that.
+      const rebuysAfterUndo =
+        typeof tp?.rebuys_used === "number" ? Math.max(0, tp.rebuys_used - 1) : 0;
+      const addonsCurrent = tp?.addons_used ?? 0;
       if (typeof tp?.rebuys_used === "number") {
-        update.rebuys_used = Math.max(0, tp.rebuys_used - 1);
+        update.rebuys_used = rebuysAfterUndo;
       }
-      if (tokensSpentAfter <= 1) {
+      if (rebuysAfterUndo <= 0 && addonsCurrent <= 0) {
         // tournament_players_buyback_consistency requires ALL of
         // buyback_used_as / buyback_used_at_level / buyback_used_at_time
         // to be null when buyback_used is false — clearing only the
@@ -2288,6 +2161,10 @@ export async function undoEvent(input: {
         update.buyback_used_as = null;
         update.buyback_used_at_level = null;
         update.buyback_used_at_time = null;
+      } else if (rebuysAfterUndo <= 0 && addonsCurrent > 0) {
+        // The rebuy is gone but an add-on is still in effect — the shared
+        // legacy flag should describe what's actually left.
+        update.buyback_used_as = "addon";
       }
       const { error } = await supabase
         .from("tournament_players")
@@ -2300,19 +2177,24 @@ export async function undoEvent(input: {
       const chipsAdded = (payload.chips_added as number | undefined) ?? 0;
       const { data: tp } = await supabase
         .from("tournament_players")
-        .select("current_chips, addons_used")
+        .select("current_chips, rebuys_used, addons_used")
         .eq("id", tournamentPlayerId)
         .maybeSingle();
       if (!tp) throw new Error("Player slot not found.");
-      const tokensSpentAfter = (payload.tokens_spent_after as number | undefined) ?? 1;
 
       const update: TablesUpdate<"tournament_players"> = {
         current_chips: Math.max(0, (tp.current_chips ?? 0) - chipsAdded),
       };
+      // See the matching comment in the rebuy branch above — re-derive
+      // the shared legacy flags from both counters, not the old
+      // shared-pool payload field.
+      const addonsAfterUndo =
+        typeof tp.addons_used === "number" ? Math.max(0, tp.addons_used - 1) : 0;
+      const rebuysCurrent = tp.rebuys_used ?? 0;
       if (typeof tp.addons_used === "number") {
-        update.addons_used = Math.max(0, tp.addons_used - 1);
+        update.addons_used = addonsAfterUndo;
       }
-      if (tokensSpentAfter <= 1) {
+      if (addonsAfterUndo <= 0 && rebuysCurrent <= 0) {
         // Same tournament_players_buyback_consistency requirement as the
         // rebuy branch above — all three buyback_used_* fields must go
         // null together with buyback_used.
@@ -2320,6 +2202,8 @@ export async function undoEvent(input: {
         update.buyback_used_as = null;
         update.buyback_used_at_level = null;
         update.buyback_used_at_time = null;
+      } else if (addonsAfterUndo <= 0 && rebuysCurrent > 0) {
+        update.buyback_used_as = "rebuy";
       }
       const { error } = await supabase
         .from("tournament_players")

@@ -83,7 +83,7 @@ Strings ending in `%` map to `percentRemainder` (matching the seed and the `priz
 
 The UHT `.backup` format doesn't carry all of the structure the app needs. The parser is intentionally narrow — anything not in the export above is omitted, **including**:
 
-- `buyback` (the seed's hand-curated buyback-token rules: `tokensPerPlayer`, `addOnAtBreakLevel`, `addOnChips`, etc.) — UHT only knows about generic re-entries
+- `buyback` (the seed's hand-curated buyback rules: `rebuysPerPlayer`, `addOnsPerPlayer`, `addOnAtBreakLevel`, `addOnChips`, etc.) — UHT only knows about generic re-entries
 - `sidePots` (4-of-a-kind, straight-flush bonuses)
 - `_comment` annotations
 - Player roster, soundtrack, skin, bounty config, and other UHT-specific fields

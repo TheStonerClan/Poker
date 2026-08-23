@@ -9,8 +9,6 @@
  * Supabase JS client.
  */
 
-import { BASE_BOUNTY_AMOUNT } from "@/lib/bounty";
-
 /**
  * Knockout tracking (PR #68) went live at this moment. Every tournament
  * finished before it has zero recorded knockouts not because nobody got
@@ -53,17 +51,6 @@ export type FinishedTournament = {
     addOnPrice?: number;
     rebuyPrice?: number;
   } | null;
-  /** Resolved once at creation (see `resolveBounty`); null if no target. */
-  bounty_target_player_id?: string | null;
-  /**
-   * Dollar amount pulled from this tournament's pool. Can exceed
-   * BASE_BOUNTY_AMOUNT when it stacked from a prior unclaimed week —
-   * see BASE_BOUNTY_AMOUNT's doc comment for why only the base amount
-   * ever comes out of any single week's pool.
-   */
-  bounty_amount?: number | null;
-  /** Set once an admin records who busted the target; null until then. */
-  bounty_collected_by_player_id?: string | null;
 };
 
 export type RosterRow = {
@@ -97,10 +84,10 @@ export type RosterRow = {
  * Pull the rebuy + add-on token counts from a roster row, preferring the
  * 0003-era integer counters when present and falling back to the legacy
  * boolean flag (`buyback_used` + `buyback_used_as`) otherwise. With
- * `tokensPerPlayer = 1` (the only tournament configuration in use today)
- * the two encodings carry the same information; this helper hides the
- * choice from every consumer so a DB without 0003 still aggregates
- * correctly.
+ * `rebuysPerPlayer = addOnsPerPlayer = 1` (the only tournament
+ * configuration in use today) the two encodings carry the same
+ * information; this helper hides the choice from every consumer so a DB
+ * without 0003 still aggregates correctly.
  */
 export function tokenCounts(row: {
   rebuys_used?: number | null;
@@ -326,6 +313,14 @@ export function buildTournamentSummaries(args: {
     const prizePool = tournPayouts.reduce((s, p) => s + p.amount, 0);
     const chopped = tournPayouts.some((p) => p.is_chopped);
     const winnerRow = tournRoster.find((r) => r.finishing_position === 1);
+    // Chop ties 1st and 2nd — name both rather than crediting the win to
+    // whoever happened to land in position 1.
+    const runnerUpRow = chopped
+      ? tournRoster.find((r) => r.finishing_position === 2)
+      : undefined;
+    const winnerName = runnerUpRow?.player?.name
+      ? `${winnerRow?.player?.name ?? "—"} & ${runnerUpRow.player.name}`
+      : (winnerRow?.player?.name ?? null);
     return {
       id: t.id,
       finishedAt: t.finished_at,
@@ -336,71 +331,12 @@ export function buildTournamentSummaries(args: {
       rebuys,
       addOns,
       prizePool,
-      winnerName: winnerRow?.player?.name ?? null,
+      winnerName,
       winnerId: winnerRow?.player_id ?? null,
       chopped,
       buyIn: t.buy_in_snapshot,
     };
   });
-}
-
-// ─── Bounty ledger ──────────────────────────────────────────────────────────
-
-export type BountyLedgerRow = {
-  tournamentId: string;
-  finishedAt: string | null;
-  targetPlayerId: string;
-  targetName: string;
-  amount: number;
-  /** True when `amount` carried over from a prior unclaimed week. */
-  isStacked: boolean;
-  collectorPlayerId: string | null;
-  collectorName: string | null;
-};
-
-/**
- * One row per tournament that had a bounty in play (`resolveBounty` sets
- * `bounty_target_player_id` at creation; not every tournament has one —
- * there's no prior finished tournament, or none of its finishers came
- * back). Target and collector names are resolved from the already-
- * fetched roster rather than a separate query: both are guaranteed to
- * be in that tournament's roster (target is chosen from returning
- * players, collector is whoever busted them), so no join is missing.
- */
-export function buildBountyLedger(args: {
-  tournaments: FinishedTournament[];
-  roster: RosterRow[];
-}): BountyLedgerRow[] {
-  const { tournaments, roster } = args;
-
-  const nameByPlayer = new Map<string, string>();
-  for (const r of roster) {
-    if (r.player_id && r.player?.name) nameByPlayer.set(r.player_id, r.player.name);
-  }
-
-  const rows: BountyLedgerRow[] = [];
-  for (const t of tournaments) {
-    if (!t.bounty_target_player_id) continue;
-    // tournaments.bounty_amount is Postgres `numeric`, which comes back
-    // from the Supabase client as a string — Number(...) it here so
-    // downstream summing (bountyCollectorCounts in HistoryBody) doesn't
-    // silently string-concat instead of adding. Same guard as
-    // lib/admin/bounty.ts's resolveBounty().
-    const amount = Number(t.bounty_amount ?? BASE_BOUNTY_AMOUNT);
-    rows.push({
-      tournamentId: t.id,
-      finishedAt: t.finished_at,
-      targetPlayerId: t.bounty_target_player_id,
-      targetName: nameByPlayer.get(t.bounty_target_player_id) ?? "—",
-      amount,
-      isStacked: amount > BASE_BOUNTY_AMOUNT,
-      collectorPlayerId: t.bounty_collected_by_player_id ?? null,
-      collectorName: t.bounty_collected_by_player_id
-        ? (nameByPlayer.get(t.bounty_collected_by_player_id) ?? "—")
-        : null,
-    });
-  }
-  return rows;
 }
 
 // ─── Knockout ledger ────────────────────────────────────────────────────────
@@ -418,8 +354,7 @@ export type KnockoutLedgerRow = {
  * One row per busted roster row with a recorded `knocked_out_by_player_id`
  * — reads the live column (roster), not the `knockout` event log, so a
  * later "Change" or "Clear" always shows the current, corrected
- * attribution rather than every historical edit. Mirrors buildBountyLedger's
- * shape and name-resolution approach.
+ * attribution rather than every historical edit.
  */
 export function buildKnockoutLedger(args: {
   tournaments: FinishedTournament[];
@@ -590,7 +525,9 @@ export type PlayerStatsRow = {
   /**
    * Sum of `f1Points(finishing_position)` across the window. The
    * primary leaderboard sort key — finishing later (better) earns more
-   * points even when the player wasn't in the money.
+   * points even when the player wasn't in the money. When 1st/2nd was
+   * chopped, both players are tied — they split the combined 1st +
+   * 2nd points evenly instead of one taking the full 1st-place value.
    */
   points: number;
   /** Tournaments the player entered in the window. */
@@ -690,6 +627,17 @@ export function buildPlayerStats(args: {
     /** Paid entries in tournaments finished at/after KNOCKOUT_TRACKING_START_MS only — see totalEntries's doc comment. */
     koEntries: number;
   };
+  // Tournaments where 1st/2nd was chopped — performFinalize always chops
+  // both positions together (or neither), so a chopped row at either
+  // position is sufficient to flag the tournament. Used below to split
+  // points evenly between the two tied players instead of crediting one
+  // the full 1st-place value and the other the full 2nd-place value.
+  const choppedTop2Tournaments = new Set(
+    payoutsInWindow
+      .filter((p) => (p.position === 1 || p.position === 2) && p.is_chopped)
+      .map((p) => p.tournament_id),
+  );
+
   const byPlayer = new Map<string, Acc>();
   const ensure = (id: string, name: string): Acc => {
     let acc = byPlayer.get(id);
@@ -725,7 +673,12 @@ export function buildPlayerStats(args: {
     if (r.finishing_position === 1) acc.wins += 1;
     if (r.finishing_position != null) {
       acc.finishingPositions.push(r.finishing_position);
-      acc.points += f1Points(r.finishing_position);
+      const tiedForFirst =
+        (r.finishing_position === 1 || r.finishing_position === 2) &&
+        choppedTop2Tournaments.has(r.tournament_id);
+      acc.points += tiedForFirst
+        ? (f1Points(1) + f1Points(2)) / 2
+        : f1Points(r.finishing_position);
     }
     if (r.busted_at_level != null) {
       acc.bustLevels.push(r.busted_at_level);
@@ -882,6 +835,8 @@ export type PlayerTournamentRow = {
    * That caller resolves the name itself from a separate lookup.
    */
   knockedOutByName: string | null;
+  /** True when this row's position (1 or 2) was tied via a chop. */
+  isChopped: boolean;
 };
 
 /**
@@ -914,6 +869,13 @@ export function buildPlayerTournamentHistory(args: {
   for (const r of args.roster) {
     if (r.player_id && r.player?.name) nameByPlayer.set(r.player_id, r.player.name);
   }
+  // Tournaments where 1st/2nd was chopped — performFinalize always chops
+  // both positions together, so a chopped row at either is sufficient.
+  const choppedTop2Tournaments = new Set(
+    args.payouts
+      .filter((p) => (p.position === 1 || p.position === 2) && p.is_chopped)
+      .map((p) => p.tournament_id),
+  );
 
   const rows: PlayerTournamentRow[] = [];
   for (const r of args.roster) {
@@ -944,6 +906,9 @@ export function buildPlayerTournamentHistory(args: {
       knockedOutByName: r.knocked_out_by_player_id
         ? (nameByPlayer.get(r.knocked_out_by_player_id) ?? null)
         : null,
+      isChopped:
+        (r.finishing_position === 1 || r.finishing_position === 2) &&
+        choppedTop2Tournaments.has(r.tournament_id),
     });
   }
 

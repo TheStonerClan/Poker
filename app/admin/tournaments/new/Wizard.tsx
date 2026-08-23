@@ -252,7 +252,8 @@ function ConfirmStep({
   onNext: () => void;
 }) {
   const buyback = template.buyback_config as {
-    tokensPerPlayer?: number;
+    rebuysPerPlayer?: number;
+    addOnsPerPlayer?: number;
     price?: number;
     rebuyChips?: number;
     addOnChips?: number;

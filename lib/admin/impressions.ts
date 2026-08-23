@@ -4,7 +4,6 @@ import Anthropic from "@anthropic-ai/sdk";
 
 import { createServiceClient } from "@/lib/supabase/service";
 import {
-  buildBountyLedger,
   buildPlayerStats,
   buildPlayerTournamentHistory,
   type ChipSnapshotEvent,
@@ -58,12 +57,6 @@ type PlayerFacts = {
      */
     chipCheckpoints?: Array<{ levelNum: number; chips: number }>;
   }>;
-  bounties: Array<{
-    amount: number;
-    role: "target" | "collector";
-    otherPlayerName: string;
-    collected: boolean;
-  }>;
 };
 
 /**
@@ -101,7 +94,7 @@ export async function refreshAllPlayerImpressions(args: {
   const { data: finished } = await supabase
     .from("tournaments")
     .select(
-      "id, template_id, status, finished_at, started_at, buy_in_snapshot, current_level, rebuy_price_snapshot, buyback_config_snapshot, bounty_target_player_id, bounty_amount, bounty_collected_by_player_id",
+      "id, template_id, status, finished_at, started_at, buy_in_snapshot, current_level, rebuy_price_snapshot, buyback_config_snapshot",
     )
     .eq("status", "finished")
     .eq("is_sandbox", args.isSandbox)
@@ -186,8 +179,6 @@ export async function refreshAllPlayerImpressions(args: {
     rebuyEvents,
     addOnEvents,
   });
-  const bountyLedger = buildBountyLedger({ tournaments, roster });
-
   const facts: PlayerFacts[] = playerStats.map((stats) => {
     const theirRoster = roster.filter((r) => r.player_id === stats.playerId);
     const history = buildPlayerTournamentHistory({
@@ -195,28 +186,6 @@ export async function refreshAllPlayerImpressions(args: {
       roster: theirRoster,
       payouts,
     }).slice(0, RECENT_HISTORY_COUNT);
-
-    const bounties = bountyLedger
-      .filter(
-        (b) =>
-          b.targetPlayerId === stats.playerId ||
-          b.collectorPlayerId === stats.playerId,
-      )
-      .map((b) =>
-        b.targetPlayerId === stats.playerId
-          ? {
-              amount: b.amount,
-              role: "target" as const,
-              otherPlayerName: b.collectorName ?? "no one yet",
-              collected: b.collectorName != null,
-            }
-          : {
-              amount: b.amount,
-              role: "collector" as const,
-              otherPlayerName: b.targetName,
-              collected: true,
-            },
-      );
 
     return {
       playerId: stats.playerId,
@@ -247,7 +216,6 @@ export async function refreshAllPlayerImpressions(args: {
             : {}),
         };
       }),
-      bounties,
     };
   });
 

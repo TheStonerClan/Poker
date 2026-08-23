@@ -20,8 +20,8 @@ type Props = {
  * buttons — only the row being worked on opens up.
  *
  * Once set, shows the credited name + a small "Change" control; picking
- * a new candidate overwrites it (same "just re-record, no separate
- * uncollect" idea as BountyPanel). "Clear" reverts to unrecorded.
+ * a new candidate overwrites it — no separate "uncollect" step. "Clear"
+ * reverts to unrecorded.
  */
 export function KnockoutPicker({
   tournamentPlayerId,
