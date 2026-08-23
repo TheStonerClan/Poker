@@ -567,11 +567,12 @@ export default async function LiveTournamentPage({
             <PlayerGrid
               currentLevel={tournament.current_level}
               buybackConfig={buybackCfg}
-              knockoutCandidates={roster
+              knockoutCandidates={inPlay
                 .filter((r) => r.player_id)
                 .map((r) => ({
                   playerId: r.player_id as string,
                   name: r.player?.name ?? "—",
+                  tableNumber: r.table_number,
                 }))}
               rows={out.map((r) => ({
                 id: r.id,
@@ -582,6 +583,7 @@ export default async function LiveTournamentPage({
                 buybackUsed: r.buyback_used,
                 buybackUsedAs: r.buyback_used_as,
                 playerId: r.player_id,
+                tableNumber: r.table_number,
                 knockedOutByPlayerId: r.knocked_out_by_player_id,
                 knockedOutByName: r.knocked_out_by_player_id
                   ? (playerNameByPlayerId.get(r.knocked_out_by_player_id) ?? null)

@@ -313,6 +313,14 @@ export function buildTournamentSummaries(args: {
     const prizePool = tournPayouts.reduce((s, p) => s + p.amount, 0);
     const chopped = tournPayouts.some((p) => p.is_chopped);
     const winnerRow = tournRoster.find((r) => r.finishing_position === 1);
+    // Chop ties 1st and 2nd — name both rather than crediting the win to
+    // whoever happened to land in position 1.
+    const runnerUpRow = chopped
+      ? tournRoster.find((r) => r.finishing_position === 2)
+      : undefined;
+    const winnerName = runnerUpRow?.player?.name
+      ? `${winnerRow?.player?.name ?? "—"} & ${runnerUpRow.player.name}`
+      : (winnerRow?.player?.name ?? null);
     return {
       id: t.id,
       finishedAt: t.finished_at,
@@ -323,7 +331,7 @@ export function buildTournamentSummaries(args: {
       rebuys,
       addOns,
       prizePool,
-      winnerName: winnerRow?.player?.name ?? null,
+      winnerName,
       winnerId: winnerRow?.player_id ?? null,
       chopped,
       buyIn: t.buy_in_snapshot,
@@ -517,7 +525,9 @@ export type PlayerStatsRow = {
   /**
    * Sum of `f1Points(finishing_position)` across the window. The
    * primary leaderboard sort key — finishing later (better) earns more
-   * points even when the player wasn't in the money.
+   * points even when the player wasn't in the money. When 1st/2nd was
+   * chopped, both players are tied — they split the combined 1st +
+   * 2nd points evenly instead of one taking the full 1st-place value.
    */
   points: number;
   /** Tournaments the player entered in the window. */
@@ -617,6 +627,17 @@ export function buildPlayerStats(args: {
     /** Paid entries in tournaments finished at/after KNOCKOUT_TRACKING_START_MS only — see totalEntries's doc comment. */
     koEntries: number;
   };
+  // Tournaments where 1st/2nd was chopped — performFinalize always chops
+  // both positions together (or neither), so a chopped row at either
+  // position is sufficient to flag the tournament. Used below to split
+  // points evenly between the two tied players instead of crediting one
+  // the full 1st-place value and the other the full 2nd-place value.
+  const choppedTop2Tournaments = new Set(
+    payoutsInWindow
+      .filter((p) => (p.position === 1 || p.position === 2) && p.is_chopped)
+      .map((p) => p.tournament_id),
+  );
+
   const byPlayer = new Map<string, Acc>();
   const ensure = (id: string, name: string): Acc => {
     let acc = byPlayer.get(id);
@@ -652,7 +673,12 @@ export function buildPlayerStats(args: {
     if (r.finishing_position === 1) acc.wins += 1;
     if (r.finishing_position != null) {
       acc.finishingPositions.push(r.finishing_position);
-      acc.points += f1Points(r.finishing_position);
+      const tiedForFirst =
+        (r.finishing_position === 1 || r.finishing_position === 2) &&
+        choppedTop2Tournaments.has(r.tournament_id);
+      acc.points += tiedForFirst
+        ? (f1Points(1) + f1Points(2)) / 2
+        : f1Points(r.finishing_position);
     }
     if (r.busted_at_level != null) {
       acc.bustLevels.push(r.busted_at_level);
@@ -809,6 +835,8 @@ export type PlayerTournamentRow = {
    * That caller resolves the name itself from a separate lookup.
    */
   knockedOutByName: string | null;
+  /** True when this row's position (1 or 2) was tied via a chop. */
+  isChopped: boolean;
 };
 
 /**
@@ -841,6 +869,13 @@ export function buildPlayerTournamentHistory(args: {
   for (const r of args.roster) {
     if (r.player_id && r.player?.name) nameByPlayer.set(r.player_id, r.player.name);
   }
+  // Tournaments where 1st/2nd was chopped — performFinalize always chops
+  // both positions together, so a chopped row at either is sufficient.
+  const choppedTop2Tournaments = new Set(
+    args.payouts
+      .filter((p) => (p.position === 1 || p.position === 2) && p.is_chopped)
+      .map((p) => p.tournament_id),
+  );
 
   const rows: PlayerTournamentRow[] = [];
   for (const r of args.roster) {
@@ -871,6 +906,9 @@ export function buildPlayerTournamentHistory(args: {
       knockedOutByName: r.knocked_out_by_player_id
         ? (nameByPlayer.get(r.knocked_out_by_player_id) ?? null)
         : null,
+      isChopped:
+        (r.finishing_position === 1 || r.finishing_position === 2) &&
+        choppedTop2Tournaments.has(r.tournament_id),
     });
   }
 

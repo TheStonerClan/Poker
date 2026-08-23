@@ -177,7 +177,8 @@ export async function loadRecapForTournament(
         .filter((n): n is string => Boolean(n))
         .join(' & ') || `Place ${place}`;
     const total = rows.reduce((s, r) => s + (r.amount ?? 0), 0);
-    podium.push({ place, name: names, payout: Math.round(total) });
+    const isChopped = rows.some((r) => r.is_chopped);
+    podium.push({ place, name: names, payout: Math.round(total), isChopped });
   }
 
   // ── helpers over events ──────────────────────────────────────────────

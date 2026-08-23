@@ -589,7 +589,9 @@ export default async function HistoryBody({
                 </div>
                 <div className="mt-1 flex items-baseline justify-between gap-2 text-xs text-fg/60">
                   <p>
-                    {t.winnerName ? `Winner: ${t.winnerName}` : "—"}
+                    {t.winnerName
+                      ? `${t.chopped ? "Tied for 1st" : "Winner"}: ${t.winnerName}`
+                      : "—"}
                     {t.chopped ? (
                       <span className="ml-1.5 rounded-full border border-gold/50 px-1.5 py-px text-[9px] uppercase tracking-wider text-gold/80">
                         chop

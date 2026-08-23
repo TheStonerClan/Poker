@@ -482,7 +482,9 @@ export default async function PlayerHistoryBody({
                         </p>
                         <p className="font-mono text-xs tabular-nums text-fg">
                           {h.position != null
-                            ? ordinal(h.position)
+                            ? h.isChopped
+                              ? "1st (tied)"
+                              : ordinal(h.position)
                             : h.bustedAtLevel != null
                               ? `Out L${h.bustedAtLevel}`
                               : "—"}

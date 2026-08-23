@@ -23,7 +23,12 @@ type Row = {
   bustedAtLevel?: number | null;
   buybackUsed: boolean;
   buybackUsedAs?: string | null;
-  /** Current table assignment; null for single-table tournaments. */
+  /**
+   * Current table assignment; null for single-table tournaments. A bust
+   * doesn't clear it (only `seat_number` does), so a busted row still
+   * carries the table they were playing at — used to scope that row's
+   * knockout candidates to tablemates.
+   */
   tableNumber?: number | null;
   /**
    * This roster row's own `players.id` — needed to exclude the busted
@@ -72,14 +77,15 @@ export function PlayerGrid({
    */
   tableOptions?: TableOption[];
   /**
-   * Knockout-attribution candidates — every roster player this grid's
-   * caller considers eligible to have busted someone here (the whole
-   * tournament for the admin page, just this table's roster for the
-   * scoped /table page). Each busted row filters out its own player_id.
-   * Omitted (or empty) call sites — e.g. the "in play" grid — simply
-   * never render the picker, since it's gated on `r.busted` too.
+   * Knockout-attribution candidates — every currently in-play (not
+   * busted) roster player, from every table; each busted row further
+   * filters this down to just its own tableNumber (and excludes its
+   * own player_id) so only current tablemates who are still standing
+   * show up as "who busted them" options. Omitted (or empty) call
+   * sites — e.g. the "in play" grid — simply never render the picker,
+   * since it's gated on `r.busted` too.
    */
-  knockoutCandidates?: { playerId: string; name: string }[];
+  knockoutCandidates?: { playerId: string; name: string; tableNumber?: number | null }[];
 }) {
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -112,7 +118,10 @@ export function PlayerGrid({
           const showAddOn = !r.busted && !r.buybackUsed && addOnOpen;
           const showBust = !r.busted;
           const koCandidates = r.busted
-            ? knockoutCandidates.filter((c) => c.playerId !== r.playerId)
+            ? knockoutCandidates.filter(
+                (c) =>
+                  c.playerId !== r.playerId && c.tableNumber === r.tableNumber,
+              )
             : [];
 
           return (
