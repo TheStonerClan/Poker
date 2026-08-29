@@ -1,6 +1,6 @@
 "use client";
 
-import { formatMoney } from "@/lib/admin/format";
+import { formatMoney, formatWins } from "@/lib/admin/format";
 import type { PlayerStatsRow } from "@/lib/admin/history-stats";
 
 import { PlayerLink } from "./PlayerLink";
@@ -59,7 +59,9 @@ export function SeasonLeaderboardTable({ rows, maxRows = 15, basePath }: Props) 
       align: "right",
       sortKey: (r) => r.wins,
       render: (r) => (
-        <span className="font-mono tabular-nums text-fg/70">{r.wins}</span>
+        <span className="font-mono tabular-nums text-fg/70">
+          {formatWins(r.wins)}
+        </span>
       ),
     },
     {

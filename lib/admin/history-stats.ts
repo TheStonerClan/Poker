@@ -157,10 +157,52 @@ export function f1Points(position: number | null | undefined): number {
   return F1_POINTS_TABLE[position] ?? 0;
 }
 
+/**
+ * Tournament ids whose top two finishers chopped. `performFinalize`
+ * always chops positions 1 and 2 together (or neither), so a chopped
+ * payout row at *either* position flags the whole tournament — which
+ * also makes this safe to derive from a payout set pre-scoped to a
+ * single player (the player profile / play-side loaders), since that
+ * player's own row carries the flag whichever position they landed in.
+ */
+export function choppedTopTwoTournamentIds(payouts: PayoutRow[]): Set<string> {
+  return new Set(
+    payouts
+      .filter((p) => (p.position === 1 || p.position === 2) && p.is_chopped)
+      .map((p) => p.tournament_id),
+  );
+}
+
+/**
+ * Win credit for a single finish — 1 for an outright win, 0.5 each when
+ * 1st/2nd was chopped, 0 otherwise.
+ *
+ * A chop is a tie, not a win for whoever happened to land in position 1:
+ * finalize splits the two survivors into positions 1 and 2 by
+ * `tournament_player.id` order purely to keep the unique
+ * (tournament_id, position) index intact, so crediting the whole win by
+ * position would hand it out on a UUID coin flip. Halving it mirrors
+ * how points already treat the chop (the combined 1st + 2nd value split
+ * evenly) and keeps total wins across all players equal to the number
+ * of tournaments played.
+ */
+export function winCredit(
+  position: number | null | undefined,
+  isChoppedTopTwo: boolean,
+): number {
+  if (position !== 1 && position !== 2) return 0;
+  if (isChoppedTopTwo) return 0.5;
+  return position === 1 ? 1 : 0;
+}
+
 export type LeaderboardRow = {
   playerId: string;
   name: string;
   tournamentsPlayed: number;
+  /**
+   * Outright wins, plus half a win for each chopped 1st/2nd — see
+   * `winCredit`. Fractional, so render it through `formatWins`.
+   */
   wins: number;
   /** "In the money" = finished with a non-zero payout. */
   itmCount: number;
@@ -174,6 +216,8 @@ export function buildLeaderboard(args: {
   payouts: PayoutRow[];
 }): LeaderboardRow[] {
   const { roster, payouts } = args;
+
+  const choppedTop2Tournaments = choppedTopTwoTournamentIds(payouts);
 
   // Map player_id → totals, walking through both tables once each.
   type Acc = {
@@ -197,7 +241,10 @@ export function buildLeaderboard(args: {
       bestFinish: null,
     };
     acc.tournamentsPlayed.add(r.tournament_id);
-    if (r.finishing_position === 1) acc.wins += 1;
+    acc.wins += winCredit(
+      r.finishing_position,
+      choppedTop2Tournaments.has(r.tournament_id),
+    );
     if (
       r.finishing_position != null &&
       (acc.bestFinish == null || r.finishing_position < acc.bestFinish)
@@ -532,7 +579,11 @@ export type PlayerStatsRow = {
   points: number;
   /** Tournaments the player entered in the window. */
   tournamentsPlayed: number;
-  /** Tournaments where finishing_position === 1. */
+  /**
+   * Outright wins (finishing_position === 1), plus half a win for each
+   * tournament where they were tied for 1st by a chop — see
+   * `winCredit`. Fractional, so render it through `formatWins`.
+   */
   wins: number;
   /** Tournaments where they took home a non-zero payout (in-the-money). */
   itmCount: number;
@@ -627,16 +678,11 @@ export function buildPlayerStats(args: {
     /** Paid entries in tournaments finished at/after KNOCKOUT_TRACKING_START_MS only — see totalEntries's doc comment. */
     koEntries: number;
   };
-  // Tournaments where 1st/2nd was chopped — performFinalize always chops
-  // both positions together (or neither), so a chopped row at either
-  // position is sufficient to flag the tournament. Used below to split
-  // points evenly between the two tied players instead of crediting one
-  // the full 1st-place value and the other the full 2nd-place value.
-  const choppedTop2Tournaments = new Set(
-    payoutsInWindow
-      .filter((p) => (p.position === 1 || p.position === 2) && p.is_chopped)
-      .map((p) => p.tournament_id),
-  );
+  // Tournaments where 1st/2nd was chopped. Used below to split both the
+  // points and the win credit evenly between the two tied players
+  // instead of crediting one the full 1st-place value and the other the
+  // full 2nd-place value.
+  const choppedTop2Tournaments = choppedTopTwoTournamentIds(payoutsInWindow);
 
   const byPlayer = new Map<string, Acc>();
   const ensure = (id: string, name: string): Acc => {
@@ -670,12 +716,12 @@ export function buildPlayerStats(args: {
     if (!tournament) continue;
     const acc = ensure(r.player_id, r.player.name);
     acc.tournamentsPlayed.add(r.tournament_id);
-    if (r.finishing_position === 1) acc.wins += 1;
+    const chopped = choppedTop2Tournaments.has(r.tournament_id);
+    acc.wins += winCredit(r.finishing_position, chopped);
     if (r.finishing_position != null) {
       acc.finishingPositions.push(r.finishing_position);
       const tiedForFirst =
-        (r.finishing_position === 1 || r.finishing_position === 2) &&
-        choppedTop2Tournaments.has(r.tournament_id);
+        (r.finishing_position === 1 || r.finishing_position === 2) && chopped;
       acc.points += tiedForFirst
         ? (f1Points(1) + f1Points(2)) / 2
         : f1Points(r.finishing_position);
@@ -869,13 +915,7 @@ export function buildPlayerTournamentHistory(args: {
   for (const r of args.roster) {
     if (r.player_id && r.player?.name) nameByPlayer.set(r.player_id, r.player.name);
   }
-  // Tournaments where 1st/2nd was chopped — performFinalize always chops
-  // both positions together, so a chopped row at either is sufficient.
-  const choppedTop2Tournaments = new Set(
-    args.payouts
-      .filter((p) => (p.position === 1 || p.position === 2) && p.is_chopped)
-      .map((p) => p.tournament_id),
-  );
+  const choppedTop2Tournaments = choppedTopTwoTournamentIds(args.payouts);
 
   const rows: PlayerTournamentRow[] = [];
   for (const r of args.roster) {

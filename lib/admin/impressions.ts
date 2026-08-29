@@ -31,6 +31,8 @@ You will receive a JSON array of players, each with verified stats and recent to
 
 If a player has very little data (0-1 recorded tournaments), keep the blurb brief and don't overstate what one data point means.
 
+A "wins" value ending in .5 is not an error: when the final two players chop the pot they're tied for 1st, and each is credited half a win. Describe those as a chop or a shared title rather than as a fraction of a victory.
+
 Some tournaments in a player's recentHistory include a "chipCheckpoints" list — their reported chip count at specific levels that night, in order. When present, you may describe their stack trajectory (e.g., built an early lead before fading, or ground up from a short stack) using only those exact chip counts and levels. Most tournaments won't have this — never imply a trajectory for one that doesn't.
 
 Return one impression per player in the input, same order.`;
@@ -53,6 +55,7 @@ type PlayerFacts = {
   playerId: string;
   name: string;
   tournamentsPlayed: number;
+  /** Fractional — a chopped tournament credits 0.5 to each tied player. */
   wins: number;
   itmCount: number;
   points: number;
