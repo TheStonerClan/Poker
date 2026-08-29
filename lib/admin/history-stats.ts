@@ -195,6 +195,43 @@ export function winCredit(
   return position === 1 ? 1 : 0;
 }
 
+/**
+ * The finishing position to feed into an *average* — 1.5 for both sides
+ * of a chop, the raw position otherwise. Same reasoning as `winCredit`:
+ * the 1-vs-2 split within a chop is a UUID coin flip, so averaging the
+ * two positions gives both players the same number while keeping the
+ * field-wide sum of finishes honest (positions 1 and 2 were both
+ * consumed by those two players either way).
+ */
+export function finishForAverage(
+  position: number | null | undefined,
+  isChoppedTopTwo: boolean,
+): number | null {
+  if (position == null) return null;
+  if (isChoppedTopTwo && (position === 1 || position === 2)) return 1.5;
+  return position;
+}
+
+/**
+ * The finishing position to rank a *personal best* by — 1 for both
+ * sides of a chop, the raw position otherwise.
+ *
+ * Deliberately not the 1.5 that `finishForAverage` uses: "best finish"
+ * is a superlative label rendered as an ordinal, not an aggregate, and
+ * every per-tournament view already renders a chopped finish as "1st
+ * (tied)" for both players. Averaging here would print "Best finish:
+ * 1.5th", and taking the raw position would have a profile claim a
+ * personal best of 2nd for a night the row right below it calls 1st.
+ */
+export function finishForBest(
+  position: number | null | undefined,
+  isChoppedTopTwo: boolean,
+): number | null {
+  if (position == null) return null;
+  if (isChoppedTopTwo && position === 2) return 1;
+  return position;
+}
+
 export type LeaderboardRow = {
   playerId: string;
   name: string;
@@ -207,7 +244,11 @@ export type LeaderboardRow = {
   /** "In the money" = finished with a non-zero payout. */
   itmCount: number;
   totalPayout: number;
-  /** Best finishing position across all played tournaments (lower is better). */
+  /**
+   * Best finishing position across all played tournaments (lower is
+   * better). A chopped 1st/2nd counts as 1 for both players — see
+   * `finishForBest`.
+   */
   bestFinish: number | null;
 };
 
@@ -241,15 +282,11 @@ export function buildLeaderboard(args: {
       bestFinish: null,
     };
     acc.tournamentsPlayed.add(r.tournament_id);
-    acc.wins += winCredit(
-      r.finishing_position,
-      choppedTop2Tournaments.has(r.tournament_id),
-    );
-    if (
-      r.finishing_position != null &&
-      (acc.bestFinish == null || r.finishing_position < acc.bestFinish)
-    ) {
-      acc.bestFinish = r.finishing_position;
+    const chopped = choppedTop2Tournaments.has(r.tournament_id);
+    acc.wins += winCredit(r.finishing_position, chopped);
+    const best = finishForBest(r.finishing_position, chopped);
+    if (best != null && (acc.bestFinish == null || best < acc.bestFinish)) {
+      acc.bestFinish = best;
     }
     byPlayer.set(r.player_id, acc);
   }
@@ -618,8 +655,18 @@ export type PlayerStatsRow = {
    * 0..1. Surfaces "always rebuys" vs "never rebuys" cohorts.
    */
   rebuyRate: number;
-  /** Average finishing position (lower is better). `null` if no recorded position. */
+  /**
+   * Average finishing position (lower is better). `null` if no recorded
+   * position. A chopped 1st/2nd averages in as 1.5 for both players —
+   * see `finishForAverage`.
+   */
   avgFinish: number | null;
+  /**
+   * Best finishing position in the window (lower is better), with a
+   * chopped 1st/2nd counting as 1 for both players — see
+   * `finishForBest`. `null` if no recorded position.
+   */
+  bestFinish: number | null;
   /** Total players this player is credited with busting, across the window. */
   knockouts: number;
   /**
@@ -673,15 +720,17 @@ export function buildPlayerStats(args: {
     rebuyLevels: number[];
     totalRebuys: number;
     totalAddOns: number;
+    /** Chop-adjusted (see `finishForAverage`), so this is what `avgFinish` means. */
     finishingPositions: number[];
+    bestFinish: number | null;
     knockouts: number;
     /** Paid entries in tournaments finished at/after KNOCKOUT_TRACKING_START_MS only — see totalEntries's doc comment. */
     koEntries: number;
   };
-  // Tournaments where 1st/2nd was chopped. Used below to split both the
-  // points and the win credit evenly between the two tied players
-  // instead of crediting one the full 1st-place value and the other the
-  // full 2nd-place value.
+  // Tournaments where 1st/2nd was chopped. Used below to keep every
+  // position-derived stat — points, wins, average finish, best finish —
+  // from crediting one tied player the full 1st-place value and the
+  // other the full 2nd-place value.
   const choppedTop2Tournaments = choppedTopTwoTournamentIds(payoutsInWindow);
 
   const byPlayer = new Map<string, Acc>();
@@ -702,6 +751,7 @@ export function buildPlayerStats(args: {
         totalRebuys: 0,
         totalAddOns: 0,
         finishingPositions: [],
+        bestFinish: null,
         knockouts: 0,
         koEntries: 0,
       };
@@ -718,8 +768,13 @@ export function buildPlayerStats(args: {
     acc.tournamentsPlayed.add(r.tournament_id);
     const chopped = choppedTop2Tournaments.has(r.tournament_id);
     acc.wins += winCredit(r.finishing_position, chopped);
+    const best = finishForBest(r.finishing_position, chopped);
+    if (best != null && (acc.bestFinish == null || best < acc.bestFinish)) {
+      acc.bestFinish = best;
+    }
+    const avgPosition = finishForAverage(r.finishing_position, chopped);
+    if (avgPosition != null) acc.finishingPositions.push(avgPosition);
     if (r.finishing_position != null) {
-      acc.finishingPositions.push(r.finishing_position);
       const tiedForFirst =
         (r.finishing_position === 1 || r.finishing_position === 2) && chopped;
       acc.points += tiedForFirst
@@ -825,6 +880,7 @@ export function buildPlayerStats(args: {
       totalAddOns: acc.totalAddOns,
       rebuyRate,
       avgFinish,
+      bestFinish: acc.bestFinish,
       knockouts: acc.knockouts,
       totalEntries,
       koRatio,
