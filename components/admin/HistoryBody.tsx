@@ -3,7 +3,7 @@ import Link from "next/link";
 import HistogramBars from "@/components/admin/HistogramBars";
 import LocalDateTime from "@/components/admin/LocalDateTime";
 import { SandboxBadge } from "@/components/SandboxBadge";
-import { formatChips, formatMoney } from "@/lib/admin/format";
+import { formatChips, formatMoney, formatWins } from "@/lib/admin/format";
 import {
   applyHistoryRange,
   buildBreakShiftStats,
@@ -341,7 +341,7 @@ export default async function HistoryBody({
                 </div>
                 <div className="flex items-baseline gap-3 font-mono text-xs tabular-nums text-fg/55">
                   <span>
-                    {row.wins} win{row.wins === 1 ? "" : "s"}
+                    {formatWins(row.wins)} win{row.wins === 1 ? "" : "s"}
                   </span>
                   <span className="text-fg w-20 text-right">
                     {formatMoney(row.totalPayout)}

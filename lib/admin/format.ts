@@ -10,6 +10,15 @@ export function formatMoney(amount: number, currency = "USD"): string {
   }
 }
 
+/**
+ * Win totals are fractional — a chopped tournament credits half a win to
+ * each of the two tied players (see `winCredit`). Whole totals render
+ * bare ("3"), halves carry one decimal ("2.5").
+ */
+export function formatWins(wins: number): string {
+  return Number.isInteger(wins) ? String(wins) : wins.toFixed(1);
+}
+
 export function formatChips(chips: number): string {
   return new Intl.NumberFormat("en-US").format(chips);
 }

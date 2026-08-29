@@ -1,10 +1,12 @@
 "use client";
 
 import LocalDateTime from "@/components/admin/LocalDateTime";
+import { formatWins } from "@/lib/admin/format";
 
 export type PlayerHistoryProps = {
   /** Total finished tournaments this player has played. */
   tournamentsPlayed: number;
+  /** Fractional — a chop credits half a win to each of the tied players. */
   wins: number;
   /** Tournaments where the player took home a non-zero payout. */
   itmCount: number;
@@ -75,7 +77,7 @@ export function HistoryTab({ history }: { history: PlayerHistoryProps | null }) 
         />
         <Stat
           label="Wins"
-          value={history.wins.toString()}
+          value={formatWins(history.wins)}
           sub={
             history.bestFinish != null
               ? `Best finish: ${ordinal(history.bestFinish)}`

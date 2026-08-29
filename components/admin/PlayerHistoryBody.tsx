@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import { Headline, RangeFilter } from "@/components/admin/HistoryBody";
 import LocalDateTime from "@/components/admin/LocalDateTime";
 import { SandboxBadge } from "@/components/SandboxBadge";
-import { formatMoney } from "@/lib/admin/format";
+import { formatMoney, formatWins } from "@/lib/admin/format";
 import {
   applyHistoryRange,
   buildBreakShiftStats,
@@ -373,7 +373,7 @@ export default async function PlayerHistoryBody({
             <section className="grid grid-cols-2 gap-2 sm:grid-cols-5">
               <Headline label="Points" value={stats.points.toString()} />
               <Headline label="Played" value={stats.tournamentsPlayed.toString()} />
-              <Headline label="Wins" value={stats.wins.toString()} />
+              <Headline label="Wins" value={formatWins(stats.wins)} />
               <Headline label="ITM" value={stats.itmCount.toString()} />
               <Headline
                 label="Net"
