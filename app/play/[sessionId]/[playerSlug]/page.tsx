@@ -288,21 +288,11 @@ async function loadPlayerHistory(
       };
     });
 
-  // `bestFinish` (lowest finishing_position) isn't on PlayerStatsRow —
-  // compute it inline from the roster, which is already this player's.
-  let bestFinish: number | null = null;
-  for (const r of roster) {
-    if (r.finishing_position == null) continue;
-    if (bestFinish == null || r.finishing_position < bestFinish) {
-      bestFinish = r.finishing_position;
-    }
-  }
-
   return {
     tournamentsPlayed: mine.tournamentsPlayed,
     wins: mine.wins,
     itmCount: mine.itmCount,
-    bestFinish,
+    bestFinish: mine.bestFinish,
     avgFinish: mine.avgFinish,
     grossWinnings: mine.grossWinnings,
     costBasis: mine.costBasis,
