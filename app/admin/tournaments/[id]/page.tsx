@@ -197,6 +197,8 @@ export default async function LiveTournamentPage({
   const buybackCfg = tournament.buyback_config_snapshot as {
     rebuyAllowedThroughLevel?: number;
     addOnAtBreakLevel?: number;
+    rebuysPerPlayer?: number;
+    addOnsPerPlayer?: number;
   };
 
   const levels = blindLevels(tournament.blind_structure_snapshot);
@@ -551,6 +553,8 @@ export default async function LiveTournamentPage({
               busted: false,
               buybackUsed: r.buyback_used,
               buybackUsedAs: r.buyback_used_as,
+              rebuysUsed: r.rebuys_used,
+              addonsUsed: r.addons_used,
               tableNumber: r.table_number,
               latestSnapshot: r.player_id
                 ? (latestSnapshotByPlayer.get(r.player_id) ?? null)
@@ -582,6 +586,8 @@ export default async function LiveTournamentPage({
                 bustedAtLevel: r.busted_at_level,
                 buybackUsed: r.buyback_used,
                 buybackUsedAs: r.buyback_used_as,
+                rebuysUsed: r.rebuys_used,
+                addonsUsed: r.addons_used,
                 playerId: r.player_id,
                 tableNumber: r.table_number,
                 knockedOutByPlayerId: r.knocked_out_by_player_id,

@@ -24,6 +24,15 @@ type Row = {
   buybackUsed: boolean;
   buybackUsedAs?: string | null;
   /**
+   * Per-budget counters (migration 0003). Rebuys and add-ons are
+   * independent budgets, so a player who rebought is still owed their
+   * add-on — gate each button on its own counter, never on the legacy
+   * `buybackUsed` flag (which either action sets). Omitted (or null)
+   * on a DB without 0003; the fallback below reads the legacy flag.
+   */
+  rebuysUsed?: number | null;
+  addonsUsed?: number | null;
+  /**
    * Current table assignment; null for single-table tournaments. A bust
    * doesn't clear it (only `seat_number` does), so a busted row still
    * carries the table they were playing at — used to scope that row's
@@ -67,6 +76,8 @@ export function PlayerGrid({
   buybackConfig: {
     rebuyAllowedThroughLevel?: number;
     addOnAtBreakLevel?: number;
+    rebuysPerPlayer?: number;
+    addOnsPerPlayer?: number;
   };
   rows: Row[];
   scope?: "admin" | "table";
@@ -99,6 +110,10 @@ export function PlayerGrid({
     scope === "admin" &&
     buybackConfig.addOnAtBreakLevel != null &&
     currentLevel === buybackConfig.addOnAtBreakLevel;
+  // Same defaults the server actions apply, so the button appears
+  // exactly when the action would succeed.
+  const rebuysPerPlayer = Math.max(1, buybackConfig.rebuysPerPlayer ?? 1);
+  const addOnsPerPlayer = Math.max(1, buybackConfig.addOnsPerPlayer ?? 1);
 
   return (
     <>
@@ -113,9 +128,24 @@ export function PlayerGrid({
       <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         {rows.map((r) => {
           const canRebuy = !r.busted && false; // can't rebuy without busting
+          // Legacy fallback: pre-0003 rows only recorded which single
+          // buyback was taken, so at most one of these can be 1 there.
+          const rebuysUsed =
+            typeof r.rebuysUsed === "number"
+              ? r.rebuysUsed
+              : r.buybackUsed && r.buybackUsedAs === "rebuy"
+                ? 1
+                : 0;
+          const addonsUsed =
+            typeof r.addonsUsed === "number"
+              ? r.addonsUsed
+              : r.buybackUsed && r.buybackUsedAs === "addon"
+                ? 1
+                : 0;
           const showRebuy =
-            r.busted && !r.buybackUsed && rebuyOpen;
-          const showAddOn = !r.busted && !r.buybackUsed && addOnOpen;
+            r.busted && rebuysUsed < rebuysPerPlayer && rebuyOpen;
+          const showAddOn =
+            !r.busted && addonsUsed < addOnsPerPlayer && addOnOpen;
           const showBust = !r.busted;
           const koCandidates = r.busted
             ? knockoutCandidates.filter(
@@ -145,9 +175,18 @@ export function PlayerGrid({
                     : `${formatChips(r.chips)}`}
                 </span>
               </div>
-              {r.buybackUsed ? (
+              {rebuysUsed > 0 || addonsUsed > 0 ? (
                 <p className="mt-0.5 text-[10px] uppercase tracking-wider text-gold/80">
-                  Buyback · {r.buybackUsedAs ?? "used"}
+                  {[
+                    rebuysUsed > 0
+                      ? `${rebuysUsed} rebuy${rebuysUsed === 1 ? "" : "s"}`
+                      : null,
+                    addonsUsed > 0
+                      ? `${addonsUsed} add-on${addonsUsed === 1 ? "" : "s"}`
+                      : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
                 </p>
               ) : null}
               {r.busted ? (
