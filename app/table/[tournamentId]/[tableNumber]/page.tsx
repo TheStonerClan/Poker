@@ -151,6 +151,8 @@ export default async function TableAdminPage({
   const buybackCfg = tournament.buyback_config_snapshot as {
     rebuyAllowedThroughLevel?: number;
     addOnAtBreakLevel?: number;
+    rebuysPerPlayer?: number;
+    addOnsPerPlayer?: number;
   };
   const cur = currentLevel(tournament);
 
@@ -301,6 +303,8 @@ export default async function TableAdminPage({
               busted: false,
               buybackUsed: r.buyback_used,
               buybackUsedAs: r.buyback_used_as,
+              rebuysUsed: r.rebuys_used,
+              addonsUsed: r.addons_used,
               latestSnapshot: r.player_id
                 ? (latestSnapshotByPlayer.get(r.player_id) ?? null)
                 : null,
@@ -332,6 +336,8 @@ export default async function TableAdminPage({
                 bustedAtLevel: r.busted_at_level,
                 buybackUsed: r.buyback_used,
                 buybackUsedAs: r.buyback_used_as,
+                rebuysUsed: r.rebuys_used,
+                addonsUsed: r.addons_used,
                 playerId: r.player_id,
                 tableNumber: r.table_number,
                 knockedOutByPlayerId: r.knocked_out_by_player_id,
